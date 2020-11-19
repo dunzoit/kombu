@@ -10,7 +10,11 @@ at https://cloud.google.com/pubsub/docs.
 import argparse
 from google.cloud import pubsub_v1
 from . import virtual
+import json
+from . import pubsubcredentials
 
+project_id = 'christy-celerypubsub-test'
+'''
 class Functions:
 
     def list_topics(self, project_id):
@@ -21,7 +25,7 @@ class Functions:
         # project_id = "your-project-id"
 
         publisher = pubsub_v1.PublisherClient()
-        project_path = f"projects/{project_id}"
+        #project_path = f"projects/{project_id}"
 
         for topic in publisher.list_topics(request={"project": project_path}):
             print(topic)
@@ -86,7 +90,7 @@ class Functions:
             future = publisher.publish(topic_path, data)
             print(future.result())
 
-        print(f"Published messages to {topic_path}.")
+        #print(f"Published messages to {topic_path}.")
         # [END pubsub_quickstart_publisher]
         # [END pubsub_publish]
 
@@ -344,18 +348,19 @@ class Functions:
         else:
             print(f"{subscription_path} is NOT detached.")
         # [END pubsub_detach_subscription]
-
+'''
 class Channel(virtual.Channel):
 
     """PubSub Channel """
-    def __init__(self, *args, **kwargs):
-        super(Channel, self).__init__(*args, **kwargs)
 
-        topics = self.Functions.list_topics(prefix=self.queue_name_prefix)
-        for queue in topics:
-            self._queue_cache[queue.name] = queue
-        self._fanout_topics = set()
-    """    
+    def __init__(self, proj, *args, **kwargs):
+        super(Channel, self).__init__(*args, **kwargs)
+        self._pubsub_connect_to(project_id, 'south-east asia')
+        #topics = self.list_topics(prefix=self.queue_name_prefix)
+        ##for queue in topics:
+         #   self._queue_cache[queue.name] = queue
+        #self._fanout_topics = set()
+    '''   
     def basic_consume(self, queue, no_ack, *args, **kwargs):
         pass
     def basic_cancel(self, consumer_tag):
@@ -366,12 +371,12 @@ class Channel(virtual.Channel):
     def entity_name(...):
         pass
     # Modules related to creating subscriptions
-    """
+    
     @property
     def conninfo(self):
         # return self.connection.client
 
-    """
+    
     @property
     def transport_options(self):
         # return self.connection.client.transport_options
@@ -420,7 +425,7 @@ class Channel(virtual.Channel):
     def wait_time_seconds(self):
         # return self.transport_options.get('wait_time_seconds',
         #                                   self.default_wait_time_seconds)
-"""
+    '''
     def _get_regioninfo(self, regions):
         if self.region:
             for _r in regions:
@@ -428,11 +433,28 @@ class Channel(virtual.Channel):
                     return _r
 
     def _pubsub_connect_to(self, fun, regions):
+        with open('/Users/christymthomas/Downloads/key.json') as f:
+            data = json.load(f)
+            p_key = data['private_key']
         conninfo = self.conninfo
         region = self._get_regioninfo(regions)
-        return fun(region=region,
-                pubsub_access_key=conninfo.userid,
-                port=conninfo.port)
+        return fun(region='south-east asia',
+                pubsub_key_id = '3bb75e65550a754cd42fe7e1a3b5024ad09bda87',
+                pubsub_access_key = p_key,
+                port = None
+                )
+
+    @property
+    def pubsub(self):
+        if self._pubsub is None:
+            self._pubsub = self._pubsub_connect_to(pubsubcredentials, _sqs.regions())
+        return self._pubsub
+
+    @property
+    def conninfo(self):
+        return self.connection.client
+
+    
 
 class Transport(virtual.Transport):
     """PubSub Transport.
