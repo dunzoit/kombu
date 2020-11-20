@@ -9,6 +9,7 @@ at https://cloud.google.com/pubsub/docs.
 
 import argparse
 from google.cloud import pubsub_v1
+from google.auth import jwt
 from . import virtual
 import json
 from . import pubsubcredentials
@@ -353,13 +354,16 @@ class Channel(virtual.Channel):
 
     """PubSub Channel """
 
-    def __init__(self, proj, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         super(Channel, self).__init__(*args, **kwargs)
-        self._pubsub_connect_to(project_id, 'south-east asia')
-        #topics = self.list_topics(prefix=self.queue_name_prefix)
-        ##for queue in topics:
-         #   self._queue_cache[queue.name] = queue
-        #self._fanout_topics = set()
+        #self.establish_pubsub_connection()
+        
+        self.service_account_info = json.load(open("/Users/christymthomas/Downloads/key.json"))
+        self.audience = "https://pubsub.googleapis.com/google.pubsub.v1.Subscriber"
+
+        self.credentials = jwt.Credentials.from_service_account_info(
+            self.service_account_info, audience=self.audience
+        )
     '''   
     def basic_consume(self, queue, no_ack, *args, **kwargs):
         pass
@@ -425,7 +429,7 @@ class Channel(virtual.Channel):
     def wait_time_seconds(self):
         # return self.transport_options.get('wait_time_seconds',
         #                                   self.default_wait_time_seconds)
-    '''
+    
     def _get_regioninfo(self, regions):
         if self.region:
             for _r in regions:
@@ -454,7 +458,35 @@ class Channel(virtual.Channel):
     def conninfo(self):
         return self.connection.client
 
+    '''
+    def sub_connect(self):
+        '''
+        Establish subscriber connection
+        '''
+        subscriber = pubsub_v1.SubscriberClient(credentials=self.credentials)
+        return subscriber
     
+    def pub_connect(self):
+        '''
+        Establish publish connection
+        ''' 
+        publisher_audience = "https://pubsub.googleapis.com/google.pubsub.v1.Publisher"
+        credentials_pub = self.credentials.with_claims(audience=publisher_audience)
+        publisher = pubsub_v1.PublisherClient(credentials=credentials_pub)
+        return publisher
+
+    def _connect_pub(self):
+        '''
+        connect to publish
+        '''
+        _pub = self.pub_connect()
+
+    def _connect_sub(self):
+        '''
+        connect to subscriber
+        '''
+        _sub = self.sub_connect()
+
 
 class Transport(virtual.Transport):
     """PubSub Transport.
