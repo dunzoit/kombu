@@ -49,11 +49,12 @@ class Channel(base.StdChannel):
         return key in self.called
 
     def exchange_declare(self, *args, **kwargs):
-        return self.publisher.create_topic(
-            request=kwargs.get("request"),
-            topic=kwargs.get("topic"),
-            timeout=kwargs.get("timeout"),
-            metadata=kwargs.get("metadata"))
+        topic_path = self.connection.publisher.topic_path(
+            "cc-dev-sandbox-20200619", "tests")
+        return self.connection.publisher.create_topic(
+            request={
+                "name": topic_path,
+            })
 
     def prepare_message(self, body, priority=0, content_type=None,
                         content_encoding=None, headers=None, properties={}):
@@ -67,16 +68,16 @@ class Channel(base.StdChannel):
 
     def basic_publish(self, message, exchange='', routing_key='',
                       mandatory=False, immediate=False, **kwargs):
-        return self.publisher.publish(
+        return self.connection.publisher.publish(
             exchange,
             message,
             ordering_key=routing_key,
-            mandatory=mandatory, 
+            mandatory=mandatory,
             immediate=immediate,
             **kwargs)
 
     def exchange_delete(self, *args, **kwargs):
-        return self.publisher.delete_topic(
+        return self.connection.publisher.delete_topic(
             request=kwargs.get("request"),
             topic=kwargs.get("topic"),
             timeout=kwargs.get("timeout"),
@@ -105,7 +106,7 @@ class Channel(base.StdChannel):
         self._called('queue_purge')
 
     def basic_consume(self, *args, **kwargs):
-        return self.subscriber.subscribe(
+        return self.connection.subscriber.subscribe(
             subscription=kwargs.get("subscription"),
             callback=kwargs.get("callback"),
             flow_control=kwargs.get("flow_control"),
@@ -115,7 +116,7 @@ class Channel(base.StdChannel):
         self._called('basic_cancel')
 
     def basic_ack(self, *args, **kwargs):
-        self.subscriber.acknowledge(
+        self.connection.subscriber.acknowledge(
             request=kwargs.get("request"),
             subscription=kwargs.get("subscription"),
             ack_ids=kwargs.get("ack_ids"),
@@ -132,7 +133,7 @@ class Channel(base.StdChannel):
         self._called('exchange_unbind')
 
     def close(self):
-        self.subscriber.close()
+        self.connection.subscriber.close()
 
     def message_to_python(self, message, *args, **kwargs):
         self._called('message_to_python')
@@ -157,6 +158,7 @@ class Channel(base.StdChannel):
 
 class Connection(object):
     connected = True
+    client = None
 
     def establish_pubsub_connection(self, service_file=None):
         if service_file is None:
@@ -176,26 +178,30 @@ class Connection(object):
         self.subscriber = pubsub_v1.SubscriberClient(credentials=credentials)
 
     def __init__(self, client, **kwargs):
+        self.client = client
         self.establish_pubsub_connection(
-            service_account_info=kwargs.get('service_account_info'))
+            service_file=kwargs.get('service_file'))
 
     def channel(self):
         return Channel(self)
 
 
 class Transport(base.Transport):
-    def __init__(self, *args, **kwargs):
-        super(Transport, self).__init__(*args, **kwargs)
-        self.establish_connection(**kwargs)
+    options = None
+
+    def __init__(self, client,
+                 default_port=None, default_ssl_port=None, **kwargs):
+        self.client = client
+        self.options = self.client.transport_options
 
     def establish_connection(self, **kwargs):
-        return Connection(self.client, **kwargs)
+        return Connection(self.client, service_file=self.options.get("service_file"))
 
     def create_channel(self, connection):
         return connection.channel()
 
     def drain_events(self, connection, **kwargs):
-        return 'event'
+        return connection.drain_events(**kwargs)
 
     def close_connection(self, connection):
         connection.connected = False
