@@ -179,7 +179,7 @@ class Producer(object):
             body, priority, content_type,
             content_encoding, headers, properties,
         )
-        if declare:
+        if declare and not (hasattr(channel, 'DONT_CARE')):
             maybe_declare = self.maybe_declare
             [maybe_declare(entity) for entity in declare]
         return channel.basic_publish(
