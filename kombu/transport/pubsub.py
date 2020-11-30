@@ -60,7 +60,8 @@ class QoS(virtual.QoS):
         :param delivery_tag: delivery tag for message
         :type body: str
         """
-        message, subscription_path = self._not_yet_acked.get(delivery_tag)
+        import pdb; pdb.set_trace()
+        message, subscription_path = self._not_yet_acked.pop(delivery_tag)
         self._channel.subscriber.\
             acknowledge(subscription_path, message.ack_id)
 
@@ -206,13 +207,6 @@ class Channel(virtual.Channel):
             topic_path, message, **kwargs)
         return future.result()
 
-    def basic_ack(self, delivery_tag):
-        """Send an acknowledgement of the message consumed
-
-        :param delivery_tag: delivery tag for message
-        :type body: str
-        """
-        self.qos._not_yet_acked.pop(delivery_tag)
 
     @property
     def publisher(self):
@@ -243,7 +237,7 @@ class Channel(virtual.Channel):
     @property
     def max_messages(self):
         """Maximum messages to pull into local cache"""
-        return self.transport_options.get('MAX_MESSAGES', 1)
+        return self.transport_options.get('MAX_MESSAGES', 10)
 
     @property
     def ack_deadline_seconds(self):
