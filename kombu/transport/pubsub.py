@@ -3,15 +3,11 @@ from __future__ import absolute_import
 import os
 import sys
 
-if sys.version_info[0] < 3:
-    import Queue as queue
-else:
-    import queue as queue
-
 from anyjson import dumps
 from amqp.protocol import queue_declare_ok_t
+
 from kombu.exceptions import ChannelError
-from kombu.five import Empty
+from kombu.five import Empty, Queue
 from kombu.log import get_logger
 from kombu.transport import virtual, base
 from kombu.utils import cached_property, uuid
@@ -144,7 +140,7 @@ class Channel(virtual.Channel):
         subscription_path = self._new_queue(kwargs.get('queue'))
         topic_path = self.state.exchanges[kwargs.get('exchange')]
         self.temp_cache[subscription_path] =\
-            queue.Queue(maxsize=self.max_messages)
+            Queue(maxsize=self.max_messages)
         try:
             self.subscriber.create_subscription(
                 subscription_path, topic_path,
