@@ -1,4 +1,5 @@
 from __future__ import absolute_import
+
 import os
 import sys
 
@@ -9,7 +10,6 @@ else:
 
 from anyjson import dumps
 from amqp.protocol import queue_declare_ok_t
-
 from kombu.exceptions import ChannelError
 from kombu.five import Empty
 from kombu.log import get_logger
@@ -19,8 +19,6 @@ from kombu.utils.compat import OrderedDict
 
 try:
     from google.cloud import pubsub_v1
-    from google.auth import jwt
-    from google.oauth2 import service_account
     from google.api_core.exceptions import AlreadyExists
 except:
     pubsub_v1 = None
@@ -29,13 +27,10 @@ logger = get_logger(__name__)
 
 
 class Message(base.Message):
-
     def __init__(self, channel, msg, **kwargs):
         super(Message, self).__init__(
-            channel,
-            body=msg.message.data,
-            delivery_tag=msg.message.message_id,
-            **kwargs)
+            channel, body=msg.message.data,
+            delivery_tag=msg.message.message_id, **kwargs)
 
     def ack(self):
         """"Send an acknowledgement of the message consumed
@@ -51,7 +46,6 @@ class QoS(virtual.QoS):
 
     def append(self, delivery_tag, message):
         """Append message to consume
-
         :param delivery_tag: delivery tag for message
         :type body: str
         :keyword message: The message received from the queue.
@@ -61,13 +55,12 @@ class QoS(virtual.QoS):
 
     def ack(self, delivery_tag):
         """Send an acknowledgement of the message consumed
-
         :param delivery_tag: delivery tag for message
         :type body: str
         """
         message, subscription_path = self._not_yet_acked.pop(delivery_tag)
         self._channel.subscriber.\
-            acknowledge(subscription_path, message.ack_id)
+            acknowledge(subscription_path, [message.ack_id])
 
 
 class Channel(virtual.Channel):
@@ -80,17 +73,14 @@ class Channel(virtual.Channel):
         self._subscriber = None
         self._credentials = None
         self._queue_cache = {}
-        self.temp_cache = queue.Queue(maxsize=self.max_messages)
+        self.temp_cache = {}
 
     def _new_queue(self, queue, **kwargs):
         """Create a new subscription in gcp
-
         :param queue: queue name
         :type body: str
-
         :return: subscription_path
         :rtype: str
-
         """
         try:
             return self._queue_cache[queue]
@@ -103,39 +93,34 @@ class Channel(virtual.Channel):
 
     def _get(self, queue):
         """Get a message from queue
-
         The message is pulled from PubSub. 
         To boost the consumption of messages the cache size 
         might be adjusted to pull multiple messages at once 
         by adjusting MAX_MESSAGES.
-
         :param queue: queue name
         :type body: str
-
         :return: message
         :rtype: Message
         """
-        if not self.temp_cache.empty():
-            return self.temp_cache.get()
         subscription_path = self._new_queue(queue)
+        if not self.temp_cache[subscription_path].empty():
+            return self.temp_cache[subscription_path].get(block=True)
         resp = self.subscriber.pull(
             subscription_path, self.max_messages)
         if resp.received_messages:
             for msg in resp.received_messages:
-                if self.temp_cache.full():
+                if self.temp_cache[subscription_path].full():
                     break
                 self.qos.append(msg.message.message_id,
                                 (msg, subscription_path))
-                self.temp_cache.put(msg)
-            return self.temp_cache.get()
-        return Empty()
+                self.temp_cache[subscription_path].put(msg)
+            return self.temp_cache[subscription_path].get(block=True)
+        raise Empty()
 
     def queue_declare(self, queue=None, passive=False, *args, **kwargs):
         """Create a new subscription
-
         :param queue: queue name
         :type body: str
-
         :return: message
         :rtype: Message
         """
@@ -151,15 +136,15 @@ class Channel(virtual.Channel):
 
     def queue_bind(self, *args, **kwargs):
         """Bind to a subscription
-
         :param queue: queue name
         :type body: str
-
         :param exchange: exchange name
         :type body: str
         """
         subscription_path = self._new_queue(kwargs.get('queue'))
         topic_path = self.state.exchanges[kwargs.get('exchange')]
+        self.temp_cache[subscription_path] =\
+            queue.Queue(maxsize=self.max_messages)
         try:
             self.subscriber.create_subscription(
                 subscription_path, topic_path,
@@ -169,7 +154,6 @@ class Channel(virtual.Channel):
 
     def exchange_declare(self, exchange='', **kwargs):
         """Declare a topic in PubSub
-
         :param exchange: queue name
         :type body: str
         """
@@ -196,7 +180,6 @@ class Channel(virtual.Channel):
     def basic_publish(self, message, exchange='', routing_key='',
                       mandatory=False, immediate=False, **kwargs):
         """Publish message to PubSub
-
         :param message: message to publish
         :type body: str
         :param exchange: topic name
@@ -244,7 +227,6 @@ class Channel(virtual.Channel):
     @property
     def ack_deadline_seconds(self):
         """Deadline for acknowledgement from the time received.
-
         This is notified to PubSub while subscribing from the client.
         """
         return self.transport_options.get('ACK_DEADLINE_SECONDS', 60)

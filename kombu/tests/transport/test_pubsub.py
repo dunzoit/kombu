@@ -7,16 +7,15 @@ from google.api_core.exceptions import AlreadyExists
 
 
 class InnerMsg(object):
-    def __init__(self, id, aId, data=None):
-        self.data = data
-        self.ack_id = aId
-        self.message_id = id
+    def __init__(self, **kwargs):
+        self.data = kwargs.get("data", None)
+        self.ack_id = kwargs.get("ackId", None)
+        self.message_id = kwargs.get("msgId", None)
 
 
 class OuterMsg(object):
-    def __init__(self, id, aId, data):
-        self.message = InnerMsg(id, aId, data=data)
-        
+    def __init__(self, **kwargs):
+        self.message = InnerMsg(**kwargs)
 
 
 class TestChannel(unittest.TestCase):
@@ -52,14 +51,20 @@ class TestChannel(unittest.TestCase):
 
     def test__get_from_subscription_pull(self):
         ''' test__get_from_subscription_pull '''
-        msg1, msg2 = OuterMsg(1, 2, 3), OuterMsg(2, 2, 3)
+        msg1, msg2 = OuterMsg(msgId=1), OuterMsg(msgId=2)
         with patch('kombu.transport.pubsub.Channel.subscriber',
                    new_callable=PropertyMock) as mkSub:
             with patch('kombu.transport.pubsub.Channel.qos',
                        new_callable=PropertyMock) as mkQoS:
-                append = mkQoS.return_value.append = MagicMock()
+                mkAppend = mkQoS.return_value.append = MagicMock()
                 newQ = self.channel._new_queue = MagicMock(
                     return_value="foo/bar")
+                mkQ = MagicMock()
+                mkQ.empty = MagicMock(return_value=True)
+                mkQ.full = MagicMock(return_value=False)
+                mkPut = mkQ.put = MagicMock()
+                mkGet = mkQ.get = MagicMock(return_value=msg1)
+                self.channel.temp_cache["foo/bar"] = mkQ
                 resp = MagicMock()
                 resp.received_messages = [msg1, msg2]
                 mkSub.return_value.pull = MagicMock(return_value=resp)
@@ -67,18 +72,33 @@ class TestChannel(unittest.TestCase):
                     call(1, (msg1, "foo/bar")),
                     call(2, (msg2, "foo/bar"))
                 ]
+                putCalls = [
+                    call(msg1),
+                    call(msg2)
+                ]
                 msg = self.channel._get("foo")
-                newQ.assert_called_with("foo")
-                append.assert_has_calls(qosCalls)
                 self.assertIsInstance(msg, OuterMsg)
                 self.assertEqual(msg.message.message_id, 1)
+                newQ.assert_called_with("foo")
+                mkAppend.assert_has_calls(qosCalls)
+                mkPut.assert_has_calls(putCalls)
+                mkGet.assert_called_with(block=True)
+
 
     def test__get_from_temp_cache(self):
         ''' test__get_from_temp_cache '''
-        self.channel.temp_cache.put(OuterMsg(1, 2, 3))
+        msg = OuterMsg(msgId=1)
+        newQ = self.channel._new_queue = MagicMock(
+            return_value="foo/bar")
+        mkQ = MagicMock()
+        mkQ.empty = MagicMock(return_value=False)
+        mkGet = mkQ.get = MagicMock(return_value=msg)
+        self.channel.temp_cache["foo/bar"] = mkQ
         msg = self.channel._get("foo")
         self.assertIsInstance(msg, OuterMsg)
         self.assertEqual(msg.message.message_id, 1)
+        newQ.assert_called_with("foo")
+        mkGet.assert_called_with(block=True)
 
     def test_queue_declare_successful(self):
         ''' test_queue_declare_successful '''
@@ -300,37 +320,33 @@ class TestChannel(unittest.TestCase):
 class TestQoS(unittest.TestCase):
     ''' TestQoS '''
     def setUp(self):
-        mkQoS = MagicMock()
-        self.qos = QoS(mkQoS)
+        mkChannel = MagicMock()
+        self.qos = QoS(mkChannel)
 
     def test_append(self):
-        '''test_append'''
-        self.qos._not_yet_acked = {}
-        self.qos.append('mock', 'test')
-        self.assertEquals(self.qos._not_yet_acked, {'mock': 'test'})
+        ''' test_append '''
+        self.qos.append('foo', 'bar')
+        self.assertEqual(self.qos._not_yet_acked['foo'], 'bar')
 
     def test_ack(self):
-        '''test_ack'''
-        msg = OuterMsg(1, 2, 3).message
-        path = self.qos._not_yet_acked.pop = MagicMock()
-        path.return_value = msg, 123
-        out = self.qos._channel = MagicMock()
-        rVal = out.subscriber.acknowledge = MagicMock()
-        self.qos.ack('model')
-        path.assert_called()
-        rVal.assert_called()
+        ''' test_ack '''
+        mkPop = self.qos._not_yet_acked.pop =\
+            MagicMock(return_value=(InnerMsg(ackId=1), "foo/bar"))
+        mkAck = self.qos._channel.subscriber.acknowledge =\
+            MagicMock()
+        self.qos.ack('foo')
+        mkPop.assert_called_with('foo')
+        mkAck.assert_called_with("foo/bar", [1])
        
 class TestMessage(unittest.TestCase):
     ''' TestMessage '''
     def setUp(self):
-        mkChnl = MagicMock()
-        msg = MagicMock()
-        self.message = Message(mkChnl, msg)
+        self.msg = Message(
+            MagicMock(), OuterMsg(delivery_tag=1))
 
     @patch('kombu.transport.pubsub.Message.channel')
-    def test_ack(self, mockChannel):
+    def test_ack(self, mkChannel):
         '''test_ack'''
-        path = mockChannel.basic_ack = MagicMock()
-        self.message.delivery_tag = OuterMsg(1, 2, 3)
-        self.message.ack()
-        path.assert_called_with(self.message.delivery_tag)
+        mkAck = mkChannel.basic_ack = MagicMock()
+        self.msg.ack()
+        mkAck.assert_called_with(self.msg.delivery_tag)
