@@ -65,7 +65,6 @@ class QoS(virtual.QoS):
         :param delivery_tag: delivery tag for message
         :type body: str
         """
-        import pdb; pdb.set_trace()
         message, subscription_path = self._not_yet_acked.pop(delivery_tag)
         self._channel.subscriber.\
             acknowledge(subscription_path, message.ack_id)

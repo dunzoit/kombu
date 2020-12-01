@@ -230,10 +230,20 @@ class TestChannel(unittest.TestCase):
                 self.assertEqual(rVal, "foo")
 
     @patch('google.cloud.pubsub_v1.PublisherClient')
-    def test_publisher(self, mockPub):
+    def test_publisher_creates_connection(self, mkPub):
         ''' test_publisher '''
-        self.channel.publisher
-        mockPub.assert_called()
+        mkPub.return_value = MagicMock()
+        rVal = self.channel.publisher
+        mkPub.assert_called()
+        self.assertIsInstance(rVal, MagicMock)
+
+    @patch('google.cloud.pubsub_v1.PublisherClient')
+    def test_publisher_returns_existing(self, mkPub):
+        ''' test_publisher '''
+        self.channel._publisher = MagicMock()
+        rVal = self.channel.publisher
+        mkPub.assert_not_called()
+        self.assertIsInstance(rVal, MagicMock)
 
     @patch('google.cloud.pubsub_v1.SubscriberClient')
     def test_subscriber(self, mockSub):
