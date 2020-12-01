@@ -1,0 +1,2 @@
+google-api-core==1.23.0
+google-cloud-pubsub==1.7.0

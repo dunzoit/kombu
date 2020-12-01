@@ -1,8 +1,13 @@
 from __future__ import absolute_import
 import os
-from queue import Queue
+import sys
 
-from anyjson import loads, dumps
+if sys.version_info[0] < 3:
+    import Queue as queue
+else:
+    import queue as queue
+
+from anyjson import dumps
 from amqp.protocol import queue_declare_ok_t
 
 from kombu.exceptions import ChannelError
@@ -75,7 +80,7 @@ class Channel(virtual.Channel):
         self._subscriber = None
         self._credentials = None
         self._queue_cache = {}
-        self.temp_cache = Queue(maxsize=self.max_messages)
+        self.temp_cache = queue.Queue(maxsize=self.max_messages)
 
     def _new_queue(self, queue, **kwargs):
         """Create a new subscription in gcp
@@ -172,8 +177,7 @@ class Channel(virtual.Channel):
         if exchange not in self.state.exchanges:
             topic_path = self.publisher.topic_path(self.project_id, exchange)
             try:
-                self.publisher.create_topic(
-                    topic_path)
+                self.publisher.create_topic(topic_path)
                 to_add = True
             except AlreadyExists:
                 to_add = True
@@ -205,14 +209,6 @@ class Channel(virtual.Channel):
         future = self.publisher.publish(
             topic_path, message, **kwargs)
         return future.result()
-
-    def basic_ack(self, delivery_tag):
-        """Send an acknowledgement of the message consumed
-
-        :param delivery_tag: delivery tag for message
-        :type body: str
-        """
-        self.qos._not_yet_acked.pop(delivery_tag)
 
     @property
     def publisher(self):
