@@ -1,20 +1,22 @@
 import unittest
 from mock import patch, call, Mock, MagicMock, PropertyMock
 
-from kombu.transport.pubsub import Channel
+from kombu.transport.pubsub import Channel, Message, QoS
 from kombu.exceptions import ChannelError
 from google.api_core.exceptions import AlreadyExists
 
 
 class InnerMsg(object):
-    def __init__(self, id, data=None):
+    def __init__(self, id, aId, data=None):
         self.data = data
+        self.ack_id = aId
         self.message_id = id
 
 
 class OuterMsg(object):
-    def __init__(self, id):
-        self.message = InnerMsg(id)
+    def __init__(self, id, aId, data):
+        self.message = InnerMsg(id, aId, data=data)
+        
 
 
 class TestChannel(unittest.TestCase):
@@ -50,7 +52,7 @@ class TestChannel(unittest.TestCase):
 
     def test__get_from_subscription_pull(self):
         ''' test__get_from_subscription_pull '''
-        msg1, msg2 = OuterMsg(1), OuterMsg(2)
+        msg1, msg2 = OuterMsg(1, 2, 3), OuterMsg(2, 2, 3)
         with patch('kombu.transport.pubsub.Channel.subscriber',
                    new_callable=PropertyMock) as mkSub:
             with patch('kombu.transport.pubsub.Channel.qos',
@@ -73,7 +75,7 @@ class TestChannel(unittest.TestCase):
 
     def test__get_from_temp_cache(self):
         ''' test__get_from_temp_cache '''
-        self.channel.temp_cache.put(OuterMsg(1))
+        self.channel.temp_cache.put(OuterMsg(1, 2, 3))
         msg = self.channel._get("foo")
         self.assertIsInstance(msg, OuterMsg)
         self.assertEqual(msg.message.message_id, 1)
@@ -246,22 +248,40 @@ class TestChannel(unittest.TestCase):
         self.assertIsInstance(rVal, MagicMock)
 
     @patch('google.cloud.pubsub_v1.SubscriberClient')
-    def test_subscriber(self, mockSub):
+    def test_subscriber_creates_connection(self, mkSub):
         ''' test_publisher '''
-        self.channel.subscriber
-        mockSub.assert_called()
+        mkSub.return_value = MagicMock()
+        rVal = self.channel.subscriber
+        mkSub.assert_called()
+        self.assertIsInstance(rVal, MagicMock)
+
+    @patch('google.cloud.pubsub_v1.PublisherClient')
+    def test_subscriber_returns_existing(self, mkSub):
+        ''' test_publisher '''
+        self.channel._subscriber = MagicMock()
+        rVal = self.channel.subscriber
+        mkSub.assert_not_called()
+        self.assertIsInstance(rVal, MagicMock)
 
     def test_transport_options(self):
         ''' test_transport_options '''
         out = self.channel.transport_options
         self.assertEquals(out, self.mocktrans)
 
-    def test_project_id(self):
-        ''' test_project_id '''
+    def test_project_id_returns_id(self):
+        ''' test_project_id_returns_id '''
         mock_out = self.mocktrans.get.return_value = {
             'PROJECT_ID': 'mock_project_id'}
         out = self.channel.project_id
         self.assertEquals(out, mock_out)
+
+    @patch('os.getenv')
+    def test_project_id_get_id(self, mkOs):
+        ''' test_project_id_get_id '''
+        mkOs.return_value = 'mockValue'
+        self.mocktrans.get.return_value = None
+        rVal = self.channel.project_id
+        self.assertEquals(rVal, 'mockValue')
 
     def test_max_messages(self):
         ''' test_max_messages '''
@@ -276,3 +296,41 @@ class TestChannel(unittest.TestCase):
             'PROJECT_ID': 'mock_project_id'}
         out = self.channel.ack_deadline_seconds
         self.assertEquals(out, mock_out)
+
+class TestQoS(unittest.TestCase):
+    ''' TestQoS '''
+    def setUp(self):
+        mkQoS = MagicMock()
+        self.qos = QoS(mkQoS)
+
+    def test_append(self):
+        '''test_append'''
+        self.qos._not_yet_acked = {}
+        self.qos.append('mock', 'test')
+        self.assertEquals(self.qos._not_yet_acked, {'mock': 'test'})
+
+    def test_ack(self):
+        '''test_ack'''
+        msg = OuterMsg(1, 2, 3).message
+        path = self.qos._not_yet_acked.pop = MagicMock()
+        path.return_value = msg, 123
+        out = self.qos._channel = MagicMock()
+        rVal = out.subscriber.acknowledge = MagicMock()
+        self.qos.ack('model')
+        path.assert_called()
+        rVal.assert_called()
+       
+class TestMessage(unittest.TestCase):
+    ''' TestMessage '''
+    def setUp(self):
+        mkChnl = MagicMock()
+        msg = MagicMock()
+        self.message = Message(mkChnl, msg)
+
+    @patch('kombu.transport.pubsub.Message.channel')
+    def test_ack(self, mockChannel):
+        '''test_ack'''
+        path = mockChannel.basic_ack = MagicMock()
+        self.message.delivery_tag = OuterMsg(1, 2, 3)
+        self.message.ack()
+        path.assert_called_with(self.message.delivery_tag)
