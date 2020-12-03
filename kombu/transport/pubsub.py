@@ -1,609 +1,250 @@
-''' module: pubsub '''
-''' module: pubsub '''
+from __future__ import absolute_import
+
+import os
+import sys
+
+from anyjson import dumps
+from amqp.protocol import queue_declare_ok_t
+
+from kombu.exceptions import ChannelError
+from kombu.five import Empty, Queue
+from kombu.log import get_logger
+from kombu.transport import virtual, base
+from kombu.utils import cached_property, uuid
+from kombu.utils.compat import OrderedDict
+
+try:
+    from google.cloud import pubsub_v1
+    from google.api_core.exceptions import AlreadyExists
+except:
+    pubsub_v1 = None
+
+logger = get_logger(__name__)
+
+class Message(base.Message):
+    def __init__(self, channel, msg, **kwargs):
+        super(Message, self).__init__(
+            channel, body=msg.message.data,
+            delivery_tag=msg.message.message_id, **kwargs)
+
+    def ack(self):
+        """"Send an acknowledgement of the message consumed
+        """
+        self.channel.basic_ack(self.delivery_tag)
+
+
+class QoS(virtual.QoS):
+    def __init__(self, channel):
+        super(QoS, self).__init__(channel, 1)
+        self._channel = channel
+        self._not_yet_acked = OrderedDict()
+
+    def append(self, delivery_tag, message):
+        """Append message to consume
+        :param delivery_tag: delivery tag for message
+        :type body: str
+        :keyword message: The message received from the queue.
+        :type encoding: str
+        """
+        self._not_yet_acked[delivery_tag] = message
+
+    def ack(self, delivery_tag):
+        """Send an acknowledgement of the message consumed
+        :param delivery_tag: delivery tag for message
+        :type body: str
+        """
+        message, subscription_path = self._not_yet_acked.pop(delivery_tag)
+        self._channel.subscriber.\
+            acknowledge(subscription_path, [message.ack_id])
 
-"""This application demonstrates how to perform basic operations on topics
-with the Cloud Pub/Sub API.
-For more information, see the README.md under /pubsub and the documentation
-at https://cloud.google.com/pubsub/docs.
-"""
 
-import argparse
-from google.cloud import pubsub_v1
-from google.auth import jwt
-from . import virtual
-import json
-from . import pubsubcredentials
-
-project_id = 'christy-celerypubsub-test'
-'''
-class Functions:
-
-    def list_topics(self, project_id):
-        """Lists all Pub/Sub topics in the given project."""
-        # [START pubsub_list_topics]
-
-        # TODO(developer)
-        # project_id = "your-project-id"
-
-        publisher = pubsub_v1.PublisherClient()
-        #project_path = f"projects/{project_id}"
-
-        for topic in publisher.list_topics(request={"project": project_path}):
-            print(topic)
-        # [END pubsub_list_topics]
-
-
-    def create_topic(self, project_id, topic_id):
-        """Create a new Pub/Sub topic."""
-        # [START pubsub_quickstart_create_topic]
-        # [START pubsub_create_topic]
-
-        # TODO(developer)
-        # project_id = "your-project-id"
-        # topic_id = "your-topic-id"
-
-        publisher = pubsub_v1.PublisherClient()
-        topic_path = publisher.topic_path(project_id, topic_id)
-
-        topic = publisher.create_topic(request={"name": topic_path})
-
-        print("Created topic: {}".format(topic.name))
-        # [END pubsub_quickstart_create_topic]
-        # [END pubsub_create_topic]
-
-
-    def delete_topic(project_id, topic_id):
-        """Deletes an existing Pub/Sub topic."""
-        # [START pubsub_delete_topic]
-
-        # TODO(developer)
-        # project_id = "your-project-id"
-        # topic_id = "your-topic-id"
-
-        publisher = pubsub_v1.PublisherClient()
-        topic_path = publisher.topic_path(project_id, topic_id)
-
-        publisher.delete_topic(request={"topic": topic_path})
-
-        print("Topic deleted: {}".format(topic_path))
-        # [END pubsub_delete_topic]
-
-
-    def publish_messages(project_id, topic_id):
-        """Publishes multiple messages to a Pub/Sub topic."""
-        # [START pubsub_quickstart_publisher]
-        # [START pubsub_publish]
-
-        # TODO(developer)
-        # project_id = "your-project-id"
-        # topic_id = "your-topic-id"
-
-        publisher = pubsub_v1.PublisherClient()
-        # The `topic_path` method creates a fully qualified identifier
-        # in the form `projects/{project_id}/topics/{topic_id}`
-        topic_path = publisher.topic_path(project_id, topic_id)
-
-        for n in range(1, 10):
-            data = "Message number {}".format(n)
-            # Data must be a bytestring
-            data = data.encode("utf-8")
-            # When you publish a message, the client returns a future.
-            future = publisher.publish(topic_path, data)
-            print(future.result())
-
-        #print(f"Published messages to {topic_path}.")
-        # [END pubsub_quickstart_publisher]
-        # [END pubsub_publish]
-
-
-    def publish_messages_with_custom_attributes(project_id, topic_id):
-        """Publishes multiple messages with custom attributes
-        to a Pub/Sub topic."""
-        # [START pubsub_publish_custom_attributes]
-
-        # TODO(developer)
-        # project_id = "your-project-id"
-        # topic_id = "your-topic-id"
-
-        publisher = pubsub_v1.PublisherClient()
-        topic_path = publisher.topic_path(project_id, topic_id)
-
-        for n in range(1, 10):
-            data = "Message number {}".format(n)
-            # Data must be a bytestring
-            data = data.encode("utf-8")
-            # Add two attributes, origin and username, to the message
-            future = publisher.publish(
-                topic_path, data, origin="python-sample", username="gcp"
-            )
-            print(future.result())
-
-        print(f"Published messages with custom attributes to {topic_path}.")
-        # [END pubsub_publish_custom_attributes]
-
-
-    def publish_messages_with_error_handler(project_id, topic_id):
-        # [START pubsub_publish_with_error_handler]
-        """Publishes multiple messages to a Pub/Sub topic with an error handler."""
-        import time
-
-
-        # TODO(developer)
-        # project_id = "your-project-id"
-        # topic_id = "your-topic-id"
-
-        publisher = pubsub_v1.PublisherClient()
-        topic_path = publisher.topic_path(project_id, topic_id)
-
-        futures = dict()
-
-        def get_callback(f, data):
-            def callback(f):
-                try:
-                    print(f.result())
-                    futures.pop(data)
-                except:  # noqa
-                    print("Please handle {} for {}.".format(f.exception(), data))
-
-            return callback
-
-        for i in range(10):
-            data = str(i)
-            futures.update({data: None})
-            # When you publish a message, the client returns a future.
-            future = publisher.publish(topic_path, data.encode("utf-8"))
-            futures[data] = future
-            # Publish failures shall be handled in the callback function.
-            future.add_done_callback(get_callback(future, data))
-
-        # Wait for all the publish futures to resolve before exiting.
-        while futures:
-            time.sleep(5)
-
-        print(f"Published messages with error handler to {topic_path}.")
-        # [END pubsub_publish_with_error_handler]
-
-
-    def publish_messages_with_batch_settings(project_id, topic_id):
-        """Publishes multiple messages to a Pub/Sub topic with batch settings."""
-        # [START pubsub_publisher_batch_settings]
-        from google.cloud import pubsub_v1
-
-        # TODO(developer)
-        # project_id = "your-project-id"
-        # topic_id = "your-topic-id"
-
-        # Configure the batch to publish as soon as there is ten messages,
-        # one kilobyte of data, or one second has passed.
-        batch_settings = pubsub_v1.types.BatchSettings(
-            max_messages=10,  # default 100
-            max_bytes=1024,  # default 1 MB
-            max_latency=1,  # default 10 ms
-        )
-        publisher = pubsub_v1.PublisherClient(batch_settings)
-        topic_path = publisher.topic_path(project_id, topic_id)
-
-        # Resolve the publish future in a separate thread.
-        def callback(future):
-            message_id = future.result()
-            print(message_id)
-
-        for n in range(1, 10):
-            data = "Message number {}".format(n)
-            # Data must be a bytestring
-            data = data.encode("utf-8")
-            future = publisher.publish(topic_path, data)
-            # Non-blocking. Allow the publisher client to batch multiple messages.
-            future.add_done_callback(callback)
-
-        print(f"Published messages with batch settings to {topic_path}.")
-        # [END pubsub_publisher_batch_settings]
-
-
-    def publish_messages_with_retry_settings(project_id, topic_id):
-        """Publishes messages with custom retry settings."""
-        # [START pubsub_publisher_retry_settings]
-        from google import api_core
-        from google.cloud import pubsub_v1
-
-        # TODO(developer)
-        # project_id = "your-project-id"
-        # topic_id = "your-topic-id"
-
-        # Configure the retry settings. Defaults shown in comments are values applied
-        # by the library by default, instead of default values in the Retry object.
-        custom_retry = api_core.retry.Retry(
-            initial=0.250,  # seconds (default: 0.1)
-            maximum=90.0,  # seconds (default: 60.0)
-            multiplier=1.45,  # default: 1.3
-            deadline=300.0,  # seconds (default: 60.0)
-            predicate=api_core.retry.if_exception_type(
-                api_core.exceptions.Aborted,
-                api_core.exceptions.DeadlineExceeded,
-                api_core.exceptions.InternalServerError,
-                api_core.exceptions.ResourceExhausted,
-                api_core.exceptions.ServiceUnavailable,
-                api_core.exceptions.Unknown,
-                api_core.exceptions.Cancelled,
-            ),
-        )
-
-        publisher = pubsub_v1.PublisherClient()
-        topic_path = publisher.topic_path(project_id, topic_id)
-
-        for n in range(1, 10):
-            data = "Message number {}".format(n)
-            # Data must be a bytestring
-            data = data.encode("utf-8")
-            future = publisher.publish(topic=topic_path, data=data, retry=custom_retry)
-            print(future.result())
-
-        print(f"Published messages with retry settings to {topic_path}.")
-        # [END pubsub_publisher_retry_settings]
-
-
-    def publish_with_ordering_keys(project_id, topic_id):
-        """Publishes messages with ordering keys."""
-        # [START pubsub_publish_with_ordering_keys]
-        from google.cloud import pubsub_v1
-
-        # TODO(developer): Choose an existing topic.
-        # project_id = "your-project-id"
-        # topic_id = "your-topic-id"
-
-        publisher_options = pubsub_v1.types.PublisherOptions(enable_message_ordering=True)
-        # Sending messages to the same region ensures they are received in order
-        # even when multiple publishers are used.
-        client_options = {"api_endpoint": "us-east1-pubsub.googleapis.com:443"}
-        publisher = pubsub_v1.PublisherClient(
-            publisher_options=publisher_options, client_options=client_options
-        )
-        # The `topic_path` method creates a fully qualified identifier
-        # in the form `projects/{project_id}/topics/{topic_id}`
-        topic_path = publisher.topic_path(project_id, topic_id)
-
-        for message in [
-            ("message1", "key1"),
-            ("message2", "key2"),
-            ("message3", "key1"),
-            ("message4", "key2"),
-        ]:
-            # Data must be a bytestring
-            data = message[0].encode("utf-8")
-            ordering_key = message[1]
-            # When you publish a message, the client returns a future.
-            future = publisher.publish(topic_path, data=data, ordering_key=ordering_key)
-            print(future.result())
-
-        print(f"Published messages with ordering keys to {topic_path}.")
-        # [END pubsub_publish_with_ordering_keys]
-
-
-    def resume_publish_with_ordering_keys(project_id, topic_id):
-        """Resume publishing messages with ordering keys when unrecoverable errors occur."""
-        # [START pubsub_resume_publish_with_ordering_keys]
-        from google.cloud import pubsub_v1
-
-        # TODO(developer): Choose an existing topic.
-        # project_id = "your-project-id"
-        # topic_id = "your-topic-id"
-
-        publisher_options = pubsub_v1.types.PublisherOptions(enable_message_ordering=True)
-        # Sending messages to the same region ensures they are received in order
-        # even when multiple publishers are used.
-        client_options = {"api_endpoint": "us-east1-pubsub.googleapis.com:443"}
-        publisher = pubsub_v1.PublisherClient(
-            publisher_options=publisher_options, client_options=client_options
-        )
-        # The `topic_path` method creates a fully qualified identifier
-        # in the form `projects/{project_id}/topics/{topic_id}`
-        topic_path = publisher.topic_path(project_id, topic_id)
-
-        for message in [
-            ("message1", "key1"),
-            ("message2", "key2"),
-            ("message3", "key1"),
-            ("message4", "key2"),
-        ]:
-            # Data must be a bytestring
-            data = message[0].encode("utf-8")
-            ordering_key = message[1]
-            # When you publish a message, the client returns a future.
-            future = publisher.publish(topic_path, data=data, ordering_key=ordering_key)
-            try:
-                print(future.result())
-            except RuntimeError:
-                # Resume publish on an ordering key that has had unrecoverable errors.
-                publisher.resume_publish(topic_path, ordering_key)
-
-        print(f"Resumed publishing messages with ordering keys to {topic_path}.")
-        # [END pubsub_resume_publish_with_ordering_keys]
-
-
-    def detach_subscription(project_id, subscription_id):
-        """Detaches a subscription from a topic and drops all messages retained in it."""
-        # [START pubsub_detach_subscription]
-        from google.api_core.exceptions import GoogleAPICallError, RetryError
-        from google.cloud import pubsub_v1
-
-        # TODO(developer): Choose an existing subscription.
-        # project_id = "your-project-id"
-        # subscription_id = "your-subscription-id"
-
-        publisher_client = pubsub_v1.PublisherClient()
-        subscriber_client = pubsub_v1.SubscriberClient()
-        subscription_path = subscriber_client.subscription_path(project_id, subscription_id)
-
-        try:
-            publisher_client.detach_subscription(
-                request={"subscription": subscription_path}
-            )
-        except (GoogleAPICallError, RetryError, ValueError, Exception) as err:
-            print(err)
-
-        subscription = subscriber_client.get_subscription(
-            request={"subscription": subscription_path}
-        )
-        if subscription.detached:
-            print(f"{subscription_path} is detached.")
-        else:
-            print(f"{subscription_path} is NOT detached.")
-        # [END pubsub_detach_subscription]
-'''
 class Channel(virtual.Channel):
+    QoS = QoS
+    Message = Message
 
-    """PubSub Channel """
+    TOPIC_PATH = "projects/{}/topics/{}"
+    SUBSCRIPTION_NAME = "projects/{}/subscriptions/{}"
 
     def __init__(self, *args, **kwargs):
         super(Channel, self).__init__(*args, **kwargs)
-        #self.establish_pubsub_connection()
-        
-        self.service_account_info = json.load(open("/Users/christymthomas/Downloads/key.json"))
-        self.audience = "https://pubsub.googleapis.com/google.pubsub.v1.Subscriber"
+        self._queue_cache = {}
+        self.temp_cache = {}
 
-        self.credentials = jwt.Credentials.from_service_account_info(
-            self.service_account_info, audience=self.audience
-        )
-    '''   
-    def basic_consume(self, queue, no_ack, *args, **kwargs):
-        pass
-    def basic_cancel(self, consumer_tag):
-        # this can be done later
-        pass
-    def drain_events(self, timeout=None, callback=None, **kwargs):
-        pass
-    def entity_name(...):
-        pass
-    # Modules related to creating subscriptions
-    
-    @property
-    def conninfo(self):
-        # return self.connection.client
+    def _get_topic_path(self, exchange):
+        return self.TOPIC_PATH.format(self.project_id, exchange)
 
-    
-    @property
-    def transport_options(self):
-        # return self.connection.client.transport_options
-    @cached_property
-    def visibility_timeout(self):
-        # return (self.transport_options.get('visibility_timeout') or
-        #         self.default_visibility_timeout)
-    @cached_property
-    def predefined_queues(self):
-        """Map of queue_name to predefined queue settings."""
-        # return self.transport_options.get('predefined_queues', None)
-    @cached_property
-    def queue_name_prefix(self):
-        # return self.transport_options.get('queue_name_prefix', '')
-    @cached_property
-    def supports_fanout(self):
-        return False
-    @cached_property
-    def region(self):
-        # return (self.transport_options.get('region') or
-        #         boto3.Session().region_name or
-        #         self.default_region)
-    @cached_property
-    def regioninfo(self):
-        # return self.transport_options.get('regioninfo')
-    @cached_property
-    def is_secure(self):
-        # return self.transport_options.get('is_secure')
-    @cached_property
-    def port(self):
-        # return self.transport_options.get('port')
-    @cached_property
-    def endpoint_url(self):
-        # if self.conninfo.hostname is not None:
-        #     scheme = 'https' if self.is_secure else 'http'
-        #     if self.conninfo.port is not None:
-        #         port = f':{self.conninfo.port}'
-        #     else:
-        #         port = ''
-        #     return '{}://{}{}'.format(
-        #         scheme,
-        #         self.conninfo.hostname,
-        #         port
-        #     )
-    @cached_property
-    def wait_time_seconds(self):
-        # return self.transport_options.get('wait_time_seconds',
-        #                                   self.default_wait_time_seconds)
-    
-    def _get_regioninfo(self, regions):
-        if self.region:
-            for _r in regions:
-                if _r.name == self.region:
-                    return _r
+    def _get_subscription_name(self, subscription):
+        return self.SUBSCRIPTION_NAME.format(self.project_id, subscription)
 
-    def _pubsub_connect_to(self, fun, regions):
-        with open('/Users/christymthomas/Downloads/key.json') as f:
-            data = json.load(f)
-            p_key = data['private_key']
-        conninfo = self.conninfo
-        region = self._get_regioninfo(regions)
-        return fun(region='south-east asia',
-                pubsub_key_id = '3bb75e65550a754cd42fe7e1a3b5024ad09bda87',
-                pubsub_access_key = p_key,
-                port = None
+    def _new_queue(self, queue, **kwargs):
+        """Create a new subscription in gcp
+        :param queue: queue name
+        :type body: str
+        :return: subscription_path
+        :rtype: str
+        """
+        if 'pid' in queue:
+            queue = queue.replace("@", ".")
+        try:
+            return self._queue_cache[queue]
+        except KeyError:
+            subscription_path =\
+                self._get_subscription_name(queue)
+            self._queue_cache[queue] = subscription_path
+            return subscription_path
+
+    def _get(self, queue):
+        """Get a message from queue
+        The message is pulled from PubSub. 
+        To boost the consumption of messages the cache size 
+        might be adjusted to pull multiple messages at once 
+        by adjusting MAX_MESSAGES.
+        :param queue: queue name
+        :type body: str
+        :return: message
+        :rtype: Message
+        """
+        if 'celery' in queue:
+            raise Empty()
+        subscription_path = self._new_queue(queue)
+        if not self.temp_cache[subscription_path].empty():
+            return self.temp_cache[subscription_path].get(block=True)
+        logger.info("".join(["Pulling messsage using ubscription ", subscription_path]))
+        resp = self.subscriber.\
+            pull(subscription_path, self.max_messages)
+        if resp.received_messages:
+            for msg in resp.received_messages:
+                if self.temp_cache[subscription_path].full():
+                    break
+                self.qos.append(msg.message.message_id,
+                                (msg, subscription_path))
+                self.temp_cache[subscription_path].put(msg)
+            return self.temp_cache[subscription_path].get(block=True)
+        raise Empty()
+
+    def queue_declare(self, queue=None, passive=False, *args, **kwargs):
+        """Create a new subscription
+        :param queue: queue name
+        :type body: str
+        :return: message
+        :rtype: Message
+        """
+        queue = queue or 'gcp.gen-%s' % uuid()
+        # TODO: need to check case when passive is True
+        if passive:
+            raise ChannelError(
+                'NOT FOUND - no queue {} in host {}'.format(
+                    queue, self.connection.client.virtual_host or '/'),
+                (50, 10), 'Channel.queue_declare', '404')
+        self._new_queue(queue, **kwargs)
+        return queue_declare_ok_t(queue, self._size(queue), 0)
+
+    def queue_bind(self, *args, **kwargs):
+        """Bind to a subscription
+        :param queue: queue name
+        :type body: str
+        :param exchange: exchange name
+        :type body: str
+        """
+        subscription_path = self._new_queue(kwargs.get('queue'))
+        topic_path = self.state.exchanges[kwargs.get('exchange')]
+        self.temp_cache[subscription_path] =\
+            Queue(maxsize=self.max_messages)
+        try:
+            self.subscriber.create_subscription(
+                subscription_path, topic_path,
+                ack_deadline_seconds=self.ack_deadline_seconds)
+            logger.info("".join(["Created subscription: ", subscription_path]))
+        except AlreadyExists:
+            logger.info("".join(["Subscription already exists: ", subscription_path]))
+            pass
+
+    def exchange_declare(self, exchange='', **kwargs):
+        """Declare a topic in PubSub
+        :param exchange: queue name
+        :type body: str
+        """
+        to_add = False
+        if exchange not in self.state.exchanges:
+            logger.info("".join(["Topic: ", exchange, " not found added in state"]))
+            topic_path = self._get_topic_path(exchange)
+            try:
+                logger.info("Creating new topic: " + exchange)
+                self.publisher.create_topic(topic_path)
+                to_add = True
+            except AlreadyExists:
+                to_add = True
+            except Exception as e:
+                raise ChannelError(
+                    '{0} - no exchange {1!r} in vhost {2!r}'.format(
+                        e.__str__(),
+                        exchange,
+                        self.connection.client.virtual_host or '/'),
+                    (50, 10), 'Channel.exchange_declare', '404',
                 )
+            finally:
+                logger.info("".join(["adding topic: ", exchange, " to state"]))
+                if to_add:
+                    self.state.exchanges[exchange] = topic_path
 
-    @property
-    def pubsub(self):
-        if self._pubsub is None:
-            self._pubsub = self._pubsub_connect_to(pubsubcredentials, _sqs.regions())
-        return self._pubsub
+    def basic_publish(self, message, exchange='', routing_key='',
+                      mandatory=False, immediate=False, **kwargs):
+        """Publish message to PubSub
+        :param message: message to publish
+        :type body: str
+        :param exchange: topic name
+        :type body: str
+        """
+        topic_path =\
+            self.publisher.topic_path(
+                self.project_id, exchange)
+        message = dumps(message).encode('utf-8')
+        future = self.publisher.publish(
+            topic_path, message, **kwargs)
+        return future.result()
 
-    @property
-    def conninfo(self):
-        return self.connection.client
+    @cached_property
+    def publisher(self):
+        """PubSub Publisher credentials"""
+        return pubsub_v1.PublisherClient()
 
-    '''
-    def sub_connect(self):
-        '''
-        Establish subscriber connection
-        '''
-        subscriber = pubsub_v1.SubscriberClient(credentials=self.credentials)
-        return subscriber
-    
-    def pub_connect(self):
-        '''
-        Establish publish connection
-        ''' 
-        publisher_audience = "https://pubsub.googleapis.com/google.pubsub.v1.Publisher"
-        credentials_pub = self.credentials.with_claims(audience=publisher_audience)
-        publisher = pubsub_v1.PublisherClient(credentials=credentials_pub)
-        return publisher
+    @cached_property
+    def subscriber(self):
+        """PubSub Subscriber credentials"""
+        return pubsub_v1.SubscriberClient()
 
-    def _connect_pub(self):
-        '''
-        connect to publish
-        '''
-        _pub = self.pub_connect()
+    @cached_property
+    def transport_options(self):
+        """PubSub Transport sepcific configurations"""
+        return self.connection.client.transport_options
 
-    def _connect_sub(self):
-        '''
-        connect to subscriber
-        '''
-        _sub = self.sub_connect()
+    @cached_property
+    def project_id(self):
+        """GCP Project ID"""
+        if not self.transport_options.get('PROJECT_ID', ''):
+            return os.getenv("GCP_PROJECT_ID")
+        return self.transport_options.get('PROJECT_ID', '')
+
+    @cached_property
+    def max_messages(self):
+        """Maximum messages to pull into local cache"""
+        return self.transport_options.get('MAX_MESSAGES', 10)
+
+    @cached_property
+    def ack_deadline_seconds(self):
+        """Deadline for acknowledgement from the time received.
+        This is notified to PubSub while subscribing from the client.
+        """
+        return self.transport_options.get('ACK_DEADLINE_SECONDS', 60)
 
 
 class Transport(virtual.Transport):
-    """PubSub Transport.
-    .. code-block:: python
-        from kombu.transport.pubsub import Transport
-        // TODO: this needs to be refactored
-        transport = Transport(
-            ...,
-            transport_options={
-                'sqs-creation-attributes': {
-                    'KmsMasterKeyId': 'alias/aws/sqs',
-                },
-            }
-        )
-    """  # noqa: E501
-    # TODO: all below implementation needs to be checked and
-    #   set according to google pub sub.
-    # Channel = Channel
-    # polling_interval = 1
-    # wait_time_seconds = 0
-    # default_port = None
-    # connection_errors = (
-    #     virtual.Transport.connection_errors +
-    #     (exceptions.BotoCoreError, socket.error)
-    # )
-    # channel_errors = (
-    #     virtual.Transport.channel_errors + (exceptions.BotoCoreError,)
-    # )
-    # driver_type = 'sqs'
-    # driver_name = 'sqs'
-    # implements = virtual.Transport.implements.extend(
-    #     asynchronous=True,
-    #     exchange_type=frozenset(['direct']),
-    # )
-    @property
-    def default_connection_params(self):
-        return {'port': self.default_port}
+    Channel = Channel
+    state = virtual.BrokerState()
+    driver_type = 'gcp_pubsub'
+    driver_name = 'pubsub_v1'
 
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument("project_id", help="Your Google Cloud project ID")
-
-    subparsers = parser.add_subparsers(dest="command")
-    subparsers.add_parser("list", help=list_topics.__doc__)
-
-    create_parser = subparsers.add_parser("create", help=create_topic.__doc__)
-    create_parser.add_argument("topic_id")
-
-    delete_parser = subparsers.add_parser("delete", help=delete_topic.__doc__)
-    delete_parser.add_argument("topic_id")
-
-    publish_parser = subparsers.add_parser("publish", help=publish_messages.__doc__)
-    publish_parser.add_argument("topic_id")
-
-    publish_with_custom_attributes_parser = subparsers.add_parser(
-        "publish-with-custom-attributes",
-        help=publish_messages_with_custom_attributes.__doc__,
-    )
-    publish_with_custom_attributes_parser.add_argument("topic_id")
-
-    publish_with_error_handler_parser = subparsers.add_parser(
-        "publish-with-error-handler", help=publish_messages_with_error_handler.__doc__,
-    )
-    publish_with_error_handler_parser.add_argument("topic_id")
-
-    publish_with_batch_settings_parser = subparsers.add_parser(
-        "publish-with-batch-settings",
-        help=publish_messages_with_batch_settings.__doc__,
-    )
-    publish_with_batch_settings_parser.add_argument("topic_id")
-
-    publish_with_retry_settings_parser = subparsers.add_parser(
-        "publish-with-retry-settings",
-        help=publish_messages_with_retry_settings.__doc__,
-    )
-    publish_with_retry_settings_parser.add_argument("topic_id")
-
-    publish_with_ordering_keys_parser = subparsers.add_parser(
-        "publish-with-ordering-keys", help=publish_with_ordering_keys.__doc__,
-    )
-    publish_with_ordering_keys_parser.add_argument("topic_id")
-
-    resume_publish_with_ordering_keys_parser = subparsers.add_parser(
-        "resume-publish-with-ordering-keys",
-        help=resume_publish_with_ordering_keys.__doc__,
-    )
-    resume_publish_with_ordering_keys_parser.add_argument("topic_id")
-
-    detach_subscription_parser = subparsers.add_parser(
-        "detach-subscription", help=detach_subscription.__doc__,
-    )
-    detach_subscription_parser.add_argument("subscription_id")
-
-    args = parser.parse_args()
-
-    if args.command == "list":
-        list_topics(args.project_id)
-    elif args.command == "create":
-        create_topic(args.project_id, args.topic_id)
-    elif args.command == "delete":
-        delete_topic(args.project_id, args.topic_id)
-    elif args.command == "publish":
-        publish_messages(args.project_id, args.topic_id)
-    elif args.command == "publish-with-custom-attributes":
-        publish_messages_with_custom_attributes(args.project_id, args.topic_id)
-    elif args.command == "publish-with-error-handler":
-        publish_messages_with_error_handler(args.project_id, args.topic_id)
-    elif args.command == "publish-with-batch-settings":
-        publish_messages_with_batch_settings(args.project_id, args.topic_id)
-    elif args.command == "publish-with-retry-settings":
-        publish_messages_with_retry_settings(args.project_id, args.topic_id)
-    elif args.command == "publish-with-ordering-keys":
-        publish_with_ordering_keys(args.project_id, args.topic_id)
-    elif args.command == "resume-publish-with-ordering-keys":
-        resume_publish_with_ordering_keys(args.project_id, args.topic_id)
-    elif args.command == "detach-subscription":
-        detach_subscription(args.project_id, args.subscription_id)
+    def __init__(self, *args, **kwargs):
+        if pubsub_v1 is None:
+            raise ImportError("The pubsub_v1 library is not installed")
+        super(Transport, self).__init__(*args, **kwargs)
