@@ -31,17 +31,32 @@ class TestChannel(unittest.TestCase):
         mkConn.return_value.QoS = MagicMock()
         self.channel = Channel(mkConn)
 
+    def test__get_topic_name(self):
+        ''' test__get_topic_name '''
+        with patch('kombu.transport.pubsub.Channel.project_id',
+                    new_callable=PropertyMock) as mkID:
+            mkID.return_value = "fizzbuzz"
+            rVal = self.channel._get_topic_path("foobar")
+            self.assertEqual(rVal, "projects/fizzbuzz/topics/foobar")
+
+    def test__get_subscription_name(self):
+        ''' test__get_subscription_name '''
+        with patch('kombu.transport.pubsub.Channel.project_id',
+                    new_callable=PropertyMock) as mkID:
+            mkID.return_value = "fizzbuzz"
+            rVal = self.channel._get_subscription_name("foobar")
+            self.assertEqual(rVal, "projects/fizzbuzz/subscriptions/foobar")
+
     @patch('kombu.transport.pubsub.Channel.project_id', new_callable=PropertyMock)
-    @patch('kombu.transport.pubsub.Channel.subscriber', new_callable=PropertyMock)
-    def test__new_queue_from_client(self, mkSub, mkID):
+    def test__new_queue_from_client(self, mkID):
         ''' test__new_queue_from_client '''
-        mkID.return_value = "fizzbuzz"
-        path = mkSub.return_value.subscription_path = MagicMock(
-            return_value="/foo/bar"
-        )
-        subscription_path = self.channel._new_queue("foo")
-        self.assertEquals(subscription_path, "/foo/bar")
-        path.assert_called_with("fizzbuzz", "foo")
+        with patch('kombu.transport.pubsub.Channel.project_id',
+                    new_callable=PropertyMock) as mkID:
+            mkID.return_value = "fizzbuzz"
+            self.channel._get_subscription_name = MagicMock(
+                return_value='/foo/bar')
+            subscription_path = self.channel._new_queue("foo")
+            self.assertEquals(subscription_path, "/foo/bar")
 
     def test__new_queue_from_cache(self):
         ''' test__new_queue_from_cache '''
@@ -183,11 +198,11 @@ class TestChannel(unittest.TestCase):
                        new_callable=PropertyMock) as mkID:
                 mkID.return_value = "test_project_id"
                 mkState.return_value.exchanges = {}
-                path = mkPub.return_value.topic_path =\
+                path = self.channel._get_topic_path =\
                     MagicMock(return_value="topic/foo")
                 topic = mkPub.return_value.create_topic = MagicMock()
                 self.channel.exchange_declare(exchange="test_ex")
-                path.assert_called_with("test_project_id", "test_ex")
+                path.assert_called_with("test_ex")
                 topic.assert_called_with("topic/foo")
                 self.assertEqual(
                     mkState.return_value.exchanges["test_ex"], "topic/foo")
@@ -201,12 +216,12 @@ class TestChannel(unittest.TestCase):
                        new_callable=PropertyMock) as mkID:
                 mkID.return_value = "test_project_id"
                 mkState.return_value.exchanges = {}
-                path = mkPub.return_value.topic_path =\
+                path = self.channel._get_topic_path =\
                     MagicMock(return_value="topic/foo")
                 topic = mkPub.return_value.create_topic = MagicMock(
                     side_effect=AlreadyExists(1))
                 self.channel.exchange_declare(exchange="test_ex")
-                path.assert_called_with("test_project_id", "test_ex")
+                path.assert_called_with("test_ex")
                 topic.assert_called_with("topic/foo")
                 self.assertEqual(
                     mkState.return_value.exchanges["test_ex"], "topic/foo")
@@ -259,28 +274,12 @@ class TestChannel(unittest.TestCase):
         mkPub.assert_called()
         self.assertIsInstance(rVal, MagicMock)
 
-    @patch('google.cloud.pubsub_v1.PublisherClient')
-    def test_publisher_returns_existing(self, mkPub):
-        ''' test_publisher '''
-        self.channel._publisher = MagicMock()
-        rVal = self.channel.publisher
-        mkPub.assert_not_called()
-        self.assertIsInstance(rVal, MagicMock)
-
     @patch('google.cloud.pubsub_v1.SubscriberClient')
     def test_subscriber_creates_connection(self, mkSub):
         ''' test_publisher '''
         mkSub.return_value = MagicMock()
         rVal = self.channel.subscriber
         mkSub.assert_called()
-        self.assertIsInstance(rVal, MagicMock)
-
-    @patch('google.cloud.pubsub_v1.PublisherClient')
-    def test_subscriber_returns_existing(self, mkSub):
-        ''' test_publisher '''
-        self.channel._subscriber = MagicMock()
-        rVal = self.channel.subscriber
-        mkSub.assert_not_called()
         self.assertIsInstance(rVal, MagicMock)
 
     def test_transport_options(self):
