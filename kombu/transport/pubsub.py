@@ -133,7 +133,7 @@ class Channel(virtual.Channel):
             return self.temp_cache[subscription_path].get(block=True)
         logger.info("".join(["Pulling messsage using subscription ", subscription_path]))
         resp = self.subscriber.\
-            pull(subscription_path, self.max_messages)
+            pull(subscription_path, self.max_messages, return_immediately=True)
         if resp.received_messages:
             for msg in resp.received_messages:
                 if self.temp_cache[subscription_path].full():
