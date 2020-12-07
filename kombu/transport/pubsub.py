@@ -3,7 +3,7 @@ from __future__ import absolute_import
 import os
 import sys
 
-from anyjson import dumps
+from anyjson import dumps, loads
 from amqp.protocol import queue_declare_ok_t
 
 from kombu.exceptions import ChannelError
@@ -21,11 +21,33 @@ except:
 
 logger = get_logger(__name__)
 
+
 class Message(base.Message):
     def __init__(self, channel, msg, **kwargs):
+        body, props = self._translate_message(msg)
         super(Message, self).__init__(
-            channel, body=msg.message.data,
-            delivery_tag=msg.message.message_id, **kwargs)
+            channel,
+            body=body,
+            delivery_tag=msg.message.message_id,
+            content_type=props.get('content_type'),
+            content_encoding=props.get('content_encoding'),
+            delivery_info=props.get('delivery_info'),
+            properties=props,
+            headers=props.get('headers') or {},
+            **kwargs)
+
+    def _translate_message(self, raw_message):
+        serialized = loads(raw_message.message.data)
+        properties = {
+            'headers': serialized['headers'],
+            'content_type': serialized['content-type'],
+            'reply_to': serialized['properties']['reply_to'],
+            'correlation_id': serialized['properties']['correlation_id'],
+            'delivery_mode': serialized['properties']['delivery_mode'],
+            'delivery_info': serialized['properties']['delivery_info'],
+            'content_encoding': serialized['content-encoding']
+        }
+        return serialized['body'], properties
 
     def ack(self):
         """"Send an acknowledgement of the message consumed
@@ -109,7 +131,7 @@ class Channel(virtual.Channel):
         subscription_path = self._new_queue(queue)
         if not self.temp_cache[subscription_path].empty():
             return self.temp_cache[subscription_path].get(block=True)
-        logger.info("".join(["Pulling messsage using ubscription ", subscription_path]))
+        logger.info("".join(["Pulling messsage using subscription ", subscription_path]))
         resp = self.subscriber.\
             pull(subscription_path, self.max_messages)
         if resp.received_messages:
