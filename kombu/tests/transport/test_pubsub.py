@@ -339,9 +339,25 @@ class TestQoS(unittest.TestCase):
        
 class TestMessage(unittest.TestCase):
     ''' TestMessage '''
+
+    DUMMY_BODY = {
+        'body': '{"args": [2, 1], "taskset": null, task": "multiply"}', 
+        'headers': {},
+        'content-type': 'application/json',
+        'properties': {
+            'reply_to': 'cfc92bde-1edb-3bdf-aa3b-224b4a21be00',
+            'correlation_id': '248fdf79-75bb-4368-81b7-34b0b60196e6',
+            'delivery_mode': 2,
+            'delivery_info': {'priority': 0}
+        },
+        'content-encoding': u'utf-8'
+    }
+
     def setUp(self):
-        self.msg = Message(
-            MagicMock(), OuterMsg(delivery_tag=1))
+        with patch('kombu.transport.pubsub.loads') as mkloads:
+            mkloads.return_value = self.DUMMY_BODY
+            self.msg = Message(
+                MagicMock(), OuterMsg(delivery_tag=1))
 
     @patch('kombu.transport.pubsub.Message.channel')
     def test_ack(self, mkChannel):
