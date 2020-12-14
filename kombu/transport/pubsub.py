@@ -38,8 +38,11 @@ class Worker(Thread):
         while True:
             logger.info("".join(["Pulling messsage using subscription ",
                 self.subscription_path]))
-            resp = self.subscriber.pull(self.subscription_path,
-                self.max_messages, return_immediately=True)
+            try:
+                resp = self.subscriber.pull(self.subscription_path,
+                    self.max_messages, return_immediately=True)
+            except ValueError:
+                continue
             if resp.received_messages:
                 for msg in resp.received_messages:
                     self.queue.put(msg, block=True)
