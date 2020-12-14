@@ -2,6 +2,7 @@ from __future__ import absolute_import
 
 import os
 import sys
+from threading import Thread
 
 from anyjson import dumps, loads
 from amqp.protocol import queue_declare_ok_t
@@ -20,6 +21,28 @@ except:
     pubsub_v1 = None
 
 logger = get_logger(__name__)
+
+
+class Worker(Thread):
+    ''' Worker thread '''
+    def __init__(self, client, subscription_path, max_messages, queue):
+        Thread.__init__(self)
+        self.subscriber = client
+        self.subscription_path = subscription_path
+        self.queue = queue
+        self.max_messages = max_messages
+        self.start()
+
+    def run(self):
+        ''' run '''
+        while True:
+            logger.info("".join(["Pulling messsage using subscription ",
+                self.subscription_path]))
+            resp = self.subscriber.pull(self.subscription_path,
+                self.max_messages, return_immediately=True)
+            if resp.received_messages:
+                for msg in resp.received_messages:
+                    self.queue.put(msg, block=True)
 
 
 class Message(base.Message):
@@ -130,18 +153,10 @@ class Channel(virtual.Channel):
             raise Empty()
         subscription_path = self._new_queue(queue)
         if not self.temp_cache[subscription_path].empty():
-            return self.temp_cache[subscription_path].get(block=True)
-        logger.info("".join(["Pulling messsage using subscription ", subscription_path]))
-        resp = self.subscriber.\
-            pull(subscription_path, self.max_messages, return_immediately=True)
-        if resp.received_messages:
-            for msg in resp.received_messages:
-                if self.temp_cache[subscription_path].full():
-                    break
-                self.qos.append(msg.message.message_id,
-                                (msg, subscription_path))
-                self.temp_cache[subscription_path].put(msg)
-            return self.temp_cache[subscription_path].get(block=True)
+            msg = self.temp_cache[subscription_path].get(block=True)
+            self.qos.append(
+                msg.message.message_id, (msg, subscription_path))
+            return msg
         raise Empty()
 
     def queue_declare(self, queue=None, passive=False, *args, **kwargs):
@@ -170,8 +185,8 @@ class Channel(virtual.Channel):
         """
         subscription_path = self._new_queue(kwargs.get('queue'))
         topic_path = self.state.exchanges[kwargs.get('exchange')]
-        self.temp_cache[subscription_path] =\
-            Queue(maxsize=self.max_messages)
+        queue = Queue(maxsize=self.max_messages)
+        self.temp_cache[subscription_path] = queue
         try:
             self.subscriber.create_subscription(
                 subscription_path, topic_path,
@@ -180,6 +195,11 @@ class Channel(virtual.Channel):
         except AlreadyExists:
             logger.info("".join(["Subscription already exists: ", subscription_path]))
             pass
+        if 'celery' in subscription_path:
+            return
+        # Start worker
+        logger.info("".join(["Starting worker: ", subscription_path, " with queue size: ", str(self.max_messages)]))
+        Worker(self.subscriber, subscription_path, self.max_messages, queue)
 
     def exchange_declare(self, exchange='', **kwargs):
         """Declare a topic in PubSub
@@ -251,21 +271,9 @@ class Channel(virtual.Channel):
         return pubsub_v1.SubscriberClient()
 
     @cached_property
-    def ack_deadline_seconds(self):
-        """Deadline for acknowledgement from the time received.
-        This is notified to PubSub while subscribing from the client.
-        """
-        return self.transport_options.get('ACK_DEADLINE_SECONDS', 60)
-
-    @cached_property
-    def delayed_topic(self):
-        """Delayed topic used to support delay messages in celery"""
-        return self.transport_options.get('DELAYED_TOPIC', None)
-
-    @cached_property
-    def max_messages(self):
-        """Maximum messages to pull into local cache"""
-        return self.transport_options.get('MAX_MESSAGES', 10)
+    def transport_options(self):
+        """PubSub Transport sepcific configurations"""
+        return self.connection.client.transport_options
 
     @cached_property
     def project_id(self):
@@ -275,9 +283,21 @@ class Channel(virtual.Channel):
         return self.transport_options.get('PROJECT_ID', '')
 
     @cached_property
-    def transport_options(self):
-        """PubSub Transport sepcific configurations"""
-        return self.connection.client.transport_options
+    def max_messages(self):
+        """Maximum messages to pull into local cache"""
+        return self.transport_options.get('MAX_MESSAGES', 10)
+
+    @cached_property
+    def delayed_topic(self):
+        """Delayed topic used to support delay messages in celery"""
+        return self.transport_options.get('DELAYED_TOPIC', None)
+
+    @cached_property
+    def ack_deadline_seconds(self):
+        """Deadline for acknowledgement from the time received.
+        This is notified to PubSub while subscribing from the client.
+        """
+        return self.transport_options.get('ACK_DEADLINE_SECONDS', 60)
 
 
 class Transport(virtual.Transport):
