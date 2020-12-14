@@ -133,7 +133,7 @@ class Channel(virtual.Channel):
             return self.temp_cache[subscription_path].get(block=True)
         logger.info("".join(["Pulling messsage using subscription ", subscription_path]))
         resp = self.subscriber.\
-            pull(subscription_path, self.max_messages)
+            pull(subscription_path, self.max_messages, return_immediately=True)
         if resp.received_messages:
             for msg in resp.received_messages:
                 if self.temp_cache[subscription_path].full():
@@ -217,10 +217,25 @@ class Channel(virtual.Channel):
         :param exchange: topic name
         :type body: str
         """
-        topic_path =\
+        eta = loads(message['body'])['eta']
+        if eta:
+            topic = self.delayed_topic
+            if topic is None:
+                raise ChannelError(
+                    'Cannot publish message id {0!r} to None delayed topic'.\
+                        format(loads(message['body'])['id']))
+            topic_path = self.publisher.topic_path(
+                self.project_id, topic)
+            message = dumps({
+                'destination_topic': exchange,
+                'eta': eta,
+                'message': message
+            }).encode('utf-8')
+        else:
+            topic_path =\
             self.publisher.topic_path(
                 self.project_id, exchange)
-        message = dumps(message).encode('utf-8')
+            message = dumps(message).encode('utf-8')
         future = self.publisher.publish(
             topic_path, message, **kwargs)
         return future.result()
@@ -236,9 +251,21 @@ class Channel(virtual.Channel):
         return pubsub_v1.SubscriberClient()
 
     @cached_property
-    def transport_options(self):
-        """PubSub Transport sepcific configurations"""
-        return self.connection.client.transport_options
+    def ack_deadline_seconds(self):
+        """Deadline for acknowledgement from the time received.
+        This is notified to PubSub while subscribing from the client.
+        """
+        return self.transport_options.get('ACK_DEADLINE_SECONDS', 60)
+
+    @cached_property
+    def delayed_topic(self):
+        """Delayed topic used to support delay messages in celery"""
+        return self.transport_options.get('DELAYED_TOPIC', None)
+
+    @cached_property
+    def max_messages(self):
+        """Maximum messages to pull into local cache"""
+        return self.transport_options.get('MAX_MESSAGES', 10)
 
     @cached_property
     def project_id(self):
@@ -248,16 +275,9 @@ class Channel(virtual.Channel):
         return self.transport_options.get('PROJECT_ID', '')
 
     @cached_property
-    def max_messages(self):
-        """Maximum messages to pull into local cache"""
-        return self.transport_options.get('MAX_MESSAGES', 10)
-
-    @cached_property
-    def ack_deadline_seconds(self):
-        """Deadline for acknowledgement from the time received.
-        This is notified to PubSub while subscribing from the client.
-        """
-        return self.transport_options.get('ACK_DEADLINE_SECONDS', 60)
+    def transport_options(self):
+        """PubSub Transport sepcific configurations"""
+        return self.connection.client.transport_options
 
 
 class Transport(virtual.Transport):
