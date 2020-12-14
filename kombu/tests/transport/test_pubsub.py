@@ -245,9 +245,9 @@ class TestChannel(unittest.TestCase):
                     topic.assert_called_with("topic/foo")
 
     @patch('kombu.transport.pubsub.dumps')
-    def test_basic_publish(self, mkDumps):
+    def test_basic_publish_eta_null(self, mkDumps):
         ''' test_basic_publish '''
-        mkDumps.return_value = '{"foo": "bar"}'
+        mkDumps.return_value = '{"body": "{\\"eta\\": null}"}'
         with patch('kombu.transport.pubsub.Channel.publisher',
                    new_callable=PropertyMock) as mkPub:
             with patch('kombu.transport.pubsub.Channel.project_id',
@@ -260,11 +260,42 @@ class TestChannel(unittest.TestCase):
                 publish = mkPub.return_value.publish = MagicMock(
                     return_value=future)
                 rVal = self.channel.basic_publish(
-                    {"foo": "bar"}, exchange="test_ex")
+                    {'body': '{"eta": null}'}, exchange="test_ex")
                 path.assert_called_with("test_project_id", "test_ex")
-                mkDumps.assert_called_with({"foo": "bar"})
-                publish.assert_called_with("topic/foo", '{"foo": "bar"}')
+                mkDumps.assert_called_with({"body": '{"eta": null}'})
+                publish.assert_called_with("topic/foo", '{"body": "{\\"eta\\": null}"}')
                 self.assertEqual(rVal, "foo")
+
+    @patch('kombu.transport.pubsub.dumps')
+    def test_basic_publish_with_eta(self, mkDumps):
+        ''' test_basic_publish '''
+        with patch('kombu.transport.pubsub.Channel.delayed_topic',
+                   new_callable=PropertyMock) as mkTopic:
+            mkTopic.return_value = "delayed-test-topic"
+            mkDumps.return_value =\
+                '{"message": {"body": "{\\"eta\\": 10}"}, "eta": 10, "destination_topic": "test_ex"}'
+            with patch('kombu.transport.pubsub.Channel.publisher',
+                    new_callable=PropertyMock) as mkPub:
+                with patch('kombu.transport.pubsub.Channel.project_id',
+                        new_callable=PropertyMock) as mkID:
+                    mkID.return_value = "test_project_id"
+                    path = mkPub.return_value.topic_path = MagicMock(
+                        return_value="topic/foo")
+                    future = MagicMock()
+                    future.result = MagicMock(return_value="foo")
+                    publish = mkPub.return_value.publish = MagicMock(
+                        return_value=future)
+                    rVal = self.channel.basic_publish(
+                        {'body': '{"eta": 10}'}, exchange="test_ex")
+                    path.assert_called_with("test_project_id", "delayed-test-topic")
+                    mkDumps.assert_called_with({
+                        'destination_topic': 'test_ex',
+                        'eta': 10,
+                        'message': {"body": '{"eta": 10}'}
+                    })
+                    publish.assert_called_with("topic/foo",
+                        '{"message": {"body": "{\\"eta\\": 10}"}, "eta": 10, "destination_topic": "test_ex"}')
+                    self.assertEqual(rVal, "foo")
 
     @patch('google.cloud.pubsub_v1.PublisherClient')
     def test_publisher_creates_connection(self, mkPub):
