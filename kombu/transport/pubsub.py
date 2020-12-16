@@ -245,13 +245,13 @@ class Channel(virtual.Channel):
         """
         if loads(message['body'])['eta']:
             return self._create_cloud_task(exchange, message)
-        return self._publish(exchange, message)
+        return self._publish(exchange, message, kwargs)
 
-    def _publish(self, topic, message):
+    def _publish(self, topic, message, **kwargs):
         ''' publish the message '''
         topic_path =\
             self.publisher.topic_path(
-                self.project_id, exchange)
+                self.project_id, topic)
         message = dumps(message).encode('utf-8')
         future = self.publisher.publish(
             topic_path, message, **kwargs)
