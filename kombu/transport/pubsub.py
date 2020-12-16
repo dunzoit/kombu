@@ -16,14 +16,11 @@ from kombu.transport import virtual, base
 from kombu.utils import cached_property, uuid
 from kombu.utils.compat import OrderedDict
 
-try:
-    import google.auth
-    from google.cloud import pubsub_v1
-    from google.cloud import tasks_v2
-    from google.protobuf import timestamp_pb2
-    from google.api_core.exceptions import AlreadyExists, DeadlineExceeded
-except:
-    pubsub_v1 = None
+import google.auth
+from google.cloud import pubsub_v1
+from google.cloud import tasks_v2
+from google.protobuf import timestamp_pb2
+from google.api_core.exceptions import AlreadyExists, DeadlineExceeded
 
 logger = get_logger(__name__)
 
@@ -360,6 +357,4 @@ class Transport(virtual.Transport):
     driver_name = 'pubsub_v1'
 
     def __init__(self, *args, **kwargs):
-        if pubsub_v1 is None:
-            raise ImportError("The pubsub_v1 library is not installed")
         super(Transport, self).__init__(*args, **kwargs)
