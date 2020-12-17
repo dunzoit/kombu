@@ -27,12 +27,15 @@ logger = get_logger(__name__)
 
 class Worker(Thread):
     ''' Worker thread '''
-    def __init__(self, client, subscription_path, max_messages, queue):
+    def __init__(
+            self, client, subscription_path, max_messages,
+            queue, return_immediately):
         Thread.__init__(self)
         self.subscriber = client
         self.subscription_path = subscription_path
         self.queue = queue
         self.max_messages = max_messages
+        self.return_immediately = return_immediately
         self.start()
 
     def callback(self, msg):
@@ -45,8 +48,10 @@ class Worker(Thread):
             logger.info("".join(["Pulling messsage using subscription ",
                 self.subscription_path]))
             try:
-                resp = self.subscriber.pull(self.subscription_path,
-                    self.max_messages, timeout=0.3)
+                resp =\
+                    self.subscriber.pull(
+                        self.subscription_path, self.max_messages,
+                        return_immediately=self.return_immediately)
             except (ValueError, DeadlineExceeded):
                 continue
             if resp.received_messages:
@@ -158,14 +163,36 @@ class Channel(virtual.Channel):
         :return: message
         :rtype: Message
         """
-        if 'celery' in queue:
+        if queue in self.ignored_queues:
             raise Empty()
         subscription_path = self._new_queue(queue)
+        return getattr(self,
+            self._execution_type() + "_msg_get")(subscription_path)
+
+    def _concurrent_msg_get(self, subscription_path):
         if not self.temp_cache[subscription_path].empty():
             msg = self.temp_cache[subscription_path].get(block=True)
             self.qos.append(
                 msg.message.message_id, (msg, subscription_path))
             return msg
+        raise Empty()
+
+    def _msg_get(self, subscription_path):
+        if not self.temp_cache[subscription_path].empty():
+            return self.temp_cache[subscription_path].get(block=True)
+        logger.info("".join([
+            "Pulling messsage using subscription ", subscription_path]))
+        resp = self.subscriber.pull(
+                subscription_path, self.max_messages,
+                return_immediately=self.return_immediately)
+        if resp.received_messages:
+            for msg in resp.received_messages:
+                if self.temp_cache[subscription_path].full():
+                    break
+                self.qos.append(msg.message.message_id,
+                                (msg, subscription_path))
+                self.temp_cache[subscription_path].put(msg)
+            return self.temp_cache[subscription_path].get(block=True)
         raise Empty()
 
     def queue_declare(self, queue=None, passive=False, *args, **kwargs):
@@ -194,8 +221,6 @@ class Channel(virtual.Channel):
         """
         subscription_path = self._new_queue(kwargs.get('queue'))
         topic_path = self.state.exchanges[kwargs.get('exchange')]
-        queue = Queue(maxsize=self.max_messages)
-        self.temp_cache[subscription_path] = queue
         try:
             self.subscriber.create_subscription(
                 subscription_path, topic_path,
@@ -204,11 +229,20 @@ class Channel(virtual.Channel):
         except AlreadyExists:
             logger.info("".join(["Subscription already exists: ", subscription_path]))
             pass
-        if 'celery' in subscription_path:
-            return
-        # Start worker
-        logger.info("".join(["Starting worker: ", subscription_path, " with queue size: ", str(self.max_messages)]))
-        Worker(self.subscriber, subscription_path, self.max_messages, queue)
+
+        queue = Queue(maxsize=self.max_messages)
+        self.temp_cache[subscription_path] = queue
+
+        # if concurrent executions then start worker threads
+        if self._execution_type() == "_concurrent":
+            if kwargs.get('queue') in self.ignored_queues:
+                return
+            logger.info("".join([
+                "Starting worker: ", subscription_path,
+                " with queue size: ", str(self.max_messages)]))
+            Worker(
+                self.subscriber, subscription_path,
+                self.max_messages, queue, self.return_immediately)
 
     def exchange_declare(self, exchange='', **kwargs):
         """Declare a topic in PubSub
@@ -267,9 +301,9 @@ class Channel(virtual.Channel):
         return self.cloud_task.create_task(self.cloud_task_queue_path, task)
 
     def _get_task(self, eta, exchange, message):
-        d = parser.parse(eta.strip())
+        parsed_time = parser.parse(eta.strip())
         ts = timestamp_pb2.Timestamp()
-        ts.FromDatetime(d)
+        ts.FromDatetime(parsed_time)
         return {
             "http_request": {
                 "http_method": tasks_v2.enums.HttpMethod.POST,
@@ -289,6 +323,11 @@ class Channel(virtual.Channel):
             "schedule_time": ts,
         }
 
+    def _execution_type(self):
+        if self.transport_options.get("CONCURRENT_PULLS", True):
+            return '_concurrent'
+        return ''
+
     @cached_property
     def publisher(self):
         """PubSub Publisher credentials"""
@@ -303,6 +342,11 @@ class Channel(virtual.Channel):
     def cloud_task(self):
         """ Client connection for cloud task """
         return tasks_v2.CloudTasksClient()
+
+    @cached_property
+    def return_immediately(self):
+        """ return immediately from pull request """
+        return self.transport_options.get("RETURN_IMMEDIATELY", True)
 
     @cached_property
     def service_account_email(self):
@@ -348,6 +392,11 @@ class Channel(virtual.Channel):
     def delayed_queue(self):
         """Delayed topic used to support delay messages in celery"""
         return self.transport_options.get('DELAYED_QUEUE', None)
+
+    @cached_property
+    def ignored_queues(self):
+        """ Queues to ignore """
+        return self.transport_options.get('IGNORED_QUEUES', [])
 
 
 class Transport(virtual.Transport):
