@@ -4,6 +4,7 @@ coveralls
 google-api-core==1.23.0
 google-cloud-pubsub==1.7.0
 google-cloud-tasks==1.5.0
+python-dateutil
 redis
 PyYAML
 msgpack-python>0.2.0  # 0.2.0 dropped 2.5 support
