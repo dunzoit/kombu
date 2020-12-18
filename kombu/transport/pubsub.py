@@ -2,7 +2,6 @@ from __future__ import absolute_import
 
 import os
 import sys
-import time
 from dateutil import parser
 from threading import Thread
 
@@ -43,7 +42,6 @@ class Worker(Thread):
 
     def run(self):
         ''' run '''
-        time.sleep(5)
         while True:
             logger.info("".join(["Pulling messsage using subscription ",
                 self.subscription_path]))
@@ -350,6 +348,9 @@ class Channel(virtual.Channel):
 
     @cached_property
     def service_account_email(self):
+        email = self.transport_options.get("SERVICE_ACCOUNT_EMAIL", None)
+        if email:
+            return email
         creds, _ = google.auth.default()
         return creds.service_account_email
 
