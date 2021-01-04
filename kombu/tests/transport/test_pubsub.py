@@ -3,6 +3,7 @@ from mock import patch, call, Mock, MagicMock, PropertyMock
 
 from kombu.transport.pubsub import Channel, Message, QoS
 from kombu.exceptions import ChannelError
+from google.cloud import tasks_v2
 from google.api_core.exceptions import AlreadyExists
 
 
@@ -71,33 +72,36 @@ class TestChannel(unittest.TestCase):
                    new_callable=PropertyMock) as mkSub:
             with patch('kombu.transport.pubsub.Channel.qos',
                        new_callable=PropertyMock) as mkQoS:
-                mkAppend = mkQoS.return_value.append = MagicMock()
-                newQ = self.channel._new_queue = MagicMock(
-                    return_value="foo/bar")
-                mkQ = MagicMock()
-                mkQ.empty = MagicMock(return_value=True)
-                mkQ.full = MagicMock(return_value=False)
-                mkPut = mkQ.put = MagicMock()
-                mkGet = mkQ.get = MagicMock(return_value=msg1)
-                self.channel.temp_cache["foo/bar"] = mkQ
-                resp = MagicMock()
-                resp.received_messages = [msg1, msg2]
-                mkSub.return_value.pull = MagicMock(return_value=resp)
-                qosCalls = [
-                    call(1, (msg1, "foo/bar")),
-                    call(2, (msg2, "foo/bar"))
-                ]
-                putCalls = [
-                    call(msg1),
-                    call(msg2)
-                ]
-                msg = self.channel._get("foo")
-                self.assertIsInstance(msg, OuterMsg)
-                self.assertEqual(msg.message.message_id, 1)
-                newQ.assert_called_with("foo")
-                mkAppend.assert_has_calls(qosCalls)
-                mkPut.assert_has_calls(putCalls)
-                mkGet.assert_called_with(block=True)
+                with patch('kombu.transport.pubsub.Channel._execution_type')\
+                        as mkExeType:
+                    mkExeType.return_value = ''
+                    mkAppend = mkQoS.return_value.append = MagicMock()
+                    newQ = self.channel._new_queue = MagicMock(
+                        return_value="foo/bar")
+                    mkQ = MagicMock()
+                    mkQ.empty = MagicMock(return_value=True)
+                    mkQ.full = MagicMock(return_value=False)
+                    mkPut = mkQ.put = MagicMock()
+                    mkGet = mkQ.get = MagicMock(return_value=msg1)
+                    self.channel.temp_cache["foo/bar"] = mkQ
+                    resp = MagicMock()
+                    resp.received_messages = [msg1, msg2]
+                    mkSub.return_value.pull = MagicMock(return_value=resp)
+                    qosCalls = [
+                        call(1, (msg1, "foo/bar")),
+                        call(2, (msg2, "foo/bar"))
+                    ]
+                    putCalls = [
+                        call(msg1),
+                        call(msg2)
+                    ]
+                    msg = self.channel._get("foo")
+                    self.assertIsInstance(msg, OuterMsg)
+                    self.assertEqual(msg.message.message_id, 1)
+                    newQ.assert_called_with("foo")
+                    mkAppend.assert_has_calls(qosCalls)
+                    mkPut.assert_has_calls(putCalls)
+                    mkGet.assert_called_with(block=True)
 
 
     def test__get_from_temp_cache(self):
@@ -142,15 +146,18 @@ class TestChannel(unittest.TestCase):
             with patch('kombu.transport.pubsub.Channel.ack_deadline_seconds',
                        new_callable=PropertyMock) as mkAck:
                 with patch('kombu.transport.pubsub.Channel.state') as mkState:
-                    mkState.exchanges = {"test_ex": "TEST_EX"}
-                    mkAck.return_value = 60
-                    self.channel._new_queue = MagicMock(return_value="foo")
-                    subcription = mkSub.return_value.create_subscription =\
-                        MagicMock(return_value="/foo/bar")
-                    self.channel.\
-                        queue_bind(queue="test_q", exchange="test_ex")
-                    subcription.assert_called_with(
-                        "foo", "TEST_EX", ack_deadline_seconds=60)
+                    with patch('kombu.transport.pubsub.Channel._execution_type')\
+                            as mkExeType:
+                        mkExeType.return_value = ''
+                        mkState.exchanges = {"test_ex": "TEST_EX"}
+                        mkAck.return_value = 60
+                        self.channel._new_queue = MagicMock(return_value="foo")
+                        subcription = mkSub.return_value.create_subscription =\
+                            MagicMock(return_value="/foo/bar")
+                        self.channel.\
+                            queue_bind(queue="test_q", exchange="test_ex")
+                        subcription.assert_called_with(
+                            "foo", "TEST_EX", ack_deadline_seconds=60)
 
     def test_queue_bind_already_exists(self):
         ''' test_queue_bind_already_exists '''
@@ -159,16 +166,19 @@ class TestChannel(unittest.TestCase):
             with patch('kombu.transport.pubsub.Channel.ack_deadline_seconds',
                        new_callable=PropertyMock) as mkAck:
                 with patch('kombu.transport.pubsub.Channel.state') as mkState:
-                    mkState.exchanges = {"test_ex": "TEST_EX"}
-                    mkAck.return_value = 60
-                    self.channel._new_queue = MagicMock(return_value="foo")
-                    mkCreate = mkSub.return_value.create_subscription =\
-                        Mock(side_effect=AlreadyExists(1))
-                    rVal = self.channel.\
-                        queue_bind(queue="test_q", exchange="test_ex")
-                    mkCreate.assert_called_with(
-                        "foo", "TEST_EX", ack_deadline_seconds=60)
-                    self.assertIsNone(rVal)
+                    with patch('kombu.transport.pubsub.Channel._execution_type')\
+                            as mkExeType:
+                        mkExeType.return_value = ''
+                        mkState.exchanges = {"test_ex": "TEST_EX"}
+                        mkAck.return_value = 60
+                        self.channel._new_queue = MagicMock(return_value="foo")
+                        mkCreate = mkSub.return_value.create_subscription =\
+                            Mock(side_effect=AlreadyExists(1))
+                        rVal = self.channel.\
+                            queue_bind(queue="test_q", exchange="test_ex")
+                        mkCreate.assert_called_with(
+                            "foo", "TEST_EX", ack_deadline_seconds=60)
+                        self.assertIsNone(rVal)
 
     def test_queue_bind_raises_exception(self):
         ''' test_queue_bind_raises_exception '''
@@ -178,16 +188,20 @@ class TestChannel(unittest.TestCase):
                        new_callable=PropertyMock) as mkAck:
                 with patch('kombu.transport.pubsub.Channel.state',
                            new_callable=PropertyMock) as mkState:
-                    mkState.exchanges = {"test_ex": "TEST_EX"}
-                    mkAck.return_value = 60
-                    self.channel._new_queue = MagicMock(return_value="foo")
-                    mkCreate = mkSub.return_value.create_subscription =\
-                        Mock(side_effect=Exception)
-                    with self.assertRaises(Exception):
-                        self.channel.\
-                            queue_bind(queue="test_q", exchange="test_ex")
-                        mkCreate.assert_called_with(
-                            "foo", "TEST_EX", ack_deadline_seconds=60)
+                    with patch(
+                        'kombu.transport.pubsub.Channel._execution_type')\
+                            as mkExeType:
+                        mkExeType.return_value = ''
+                        mkState.exchanges = {"test_ex": "TEST_EX"}
+                        mkAck.return_value = 60
+                        self.channel._new_queue = MagicMock(return_value="foo")
+                        mkCreate = mkSub.return_value.create_subscription =\
+                            Mock(side_effect=Exception)
+                        with self.assertRaises(Exception):
+                            self.channel.\
+                                queue_bind(queue="test_q", exchange="test_ex")
+                            mkCreate.assert_called_with(
+                                "foo", "TEST_EX", ack_deadline_seconds=60)
 
     @patch('kombu.transport.pubsub.Channel.state', new_callable=PropertyMock)
     def test_exchange_declare_create_topic(self, mkState):
@@ -245,7 +259,26 @@ class TestChannel(unittest.TestCase):
                     topic.assert_called_with("topic/foo")
 
     @patch('kombu.transport.pubsub.dumps')
-    def test_basic_publish_eta_null(self, mkDumps):
+    def test_basic_publish_calls_create_cloud_task(self, mkDumps):
+        ''' test_basic_publish_calls_create_cloud_task '''
+        message = {"body": '{"eta": null}'}
+        with patch('kombu.transport.pubsub.Channel._publish') as mkPublish:
+            mkDumps.return_value = message
+            self.channel.basic_publish(message, "topic/foo")
+            mkPublish.assert_called_with("topic/foo", message)
+
+    @patch('kombu.transport.pubsub.dumps')
+    def test_basic_publish_calls_publish(self, mkDumps):
+        ''' test_basic_publish_calls_publish '''
+        message = {"body": '{"eta": 10}'}
+        with patch('kombu.transport.pubsub.Channel._create_cloud_task')\
+                as mkCreate:
+            mkDumps.return_value = message
+            self.channel.basic_publish(message, "topic/foo")
+            mkCreate.assert_called_with("topic/foo", message)
+
+    @patch('kombu.transport.pubsub.dumps')
+    def test__publish(self, mkDumps):
         ''' test_basic_publish '''
         mkDumps.return_value = '{"body": "{\\"eta\\": null}"}'
         with patch('kombu.transport.pubsub.Channel.publisher',
@@ -259,43 +292,44 @@ class TestChannel(unittest.TestCase):
                 future.result = MagicMock(return_value="foo")
                 publish = mkPub.return_value.publish = MagicMock(
                     return_value=future)
-                rVal = self.channel.basic_publish(
-                    {'body': '{"eta": null}'}, exchange="test_ex")
+                rVal = self.channel._publish("test_ex", {"body": '{"eta": null}'})
                 path.assert_called_with("test_project_id", "test_ex")
                 mkDumps.assert_called_with({"body": '{"eta": null}'})
                 publish.assert_called_with("topic/foo", '{"body": "{\\"eta\\": null}"}')
                 self.assertEqual(rVal, "foo")
 
     @patch('kombu.transport.pubsub.dumps')
-    def test_basic_publish_with_eta(self, mkDumps):
-        ''' test_basic_publish '''
-        with patch('kombu.transport.pubsub.Channel.delayed_topic',
-                   new_callable=PropertyMock) as mkTopic:
-            mkTopic.return_value = "delayed-test-topic"
-            mkDumps.return_value =\
-                '{"message": {"body": "{\\"eta\\": 10}"}, "eta": 10, "destination_topic": "test_ex"}'
-            with patch('kombu.transport.pubsub.Channel.publisher',
-                    new_callable=PropertyMock) as mkPub:
-                with patch('kombu.transport.pubsub.Channel.project_id',
-                        new_callable=PropertyMock) as mkID:
-                    mkID.return_value = "test_project_id"
-                    path = mkPub.return_value.topic_path = MagicMock(
-                        return_value="topic/foo")
-                    future = MagicMock()
-                    future.result = MagicMock(return_value="foo")
-                    publish = mkPub.return_value.publish = MagicMock(
-                        return_value=future)
-                    rVal = self.channel.basic_publish(
-                        {'body': '{"eta": 10}'}, exchange="test_ex")
-                    path.assert_called_with("test_project_id", "delayed-test-topic")
-                    mkDumps.assert_called_with({
-                        'destination_topic': 'test_ex',
-                        'eta': 10,
-                        'message': {"body": '{"eta": 10}'}
-                    })
-                    publish.assert_called_with("topic/foo",
-                        '{"message": {"body": "{\\"eta\\": 10}"}, "eta": 10, "destination_topic": "test_ex"}')
-                    self.assertEqual(rVal, "foo")
+    def test__create_cloud_task(self, mkDumps):
+        ''' test__create_cloud_task '''
+        message = {"body": '{"eta": 10}'}
+        mkDumps.return_value = message
+        with patch('kombu.transport.pubsub.Channel._get_task') as mkGet:
+            with patch('kombu.transport.pubsub.Channel.cloud_task',
+                        new_callable=PropertyMock) as mkCreateTask:
+                with patch('kombu.transport.pubsub.Channel.cloud_task_queue_path',
+                           new_callable=PropertyMock) as mktaskPath:
+                    mktaskPath.return_value = "dummy_path"
+                    mkGet.return_value = {"task": "dummy"}
+                    mkCreate = mkCreateTask.return_value.create_task = MagicMock()
+                    self.channel._create_cloud_task("test_ex", message)
+                    mkCreate.assert_called_with("dummy_path", {"task": "dummy"})
+                    mkGet.assert_called_with(10, "test_ex", message)
+
+    def test__get_task(self):
+        ''' test__get_task '''
+        with patch('kombu.transport.pubsub.Channel.transport_options',
+                   new_callable=PropertyMock) as mkTransport:
+            with patch('kombu.transport.pubsub.Channel.service_account_email',
+                       new_callable=PropertyMock) as mkEmail:
+                with patch('kombu.transport.pubsub.Channel.cloud_task_queue_path',
+                           new_callable=PropertyMock) as mktaskPath:
+                    mktaskPath.return_value = "dummy_path"
+                    mkEmail.return_value = "foo@bar.com"
+                    mkTransport.return_value = {"CLOUD_FUNCTION_PUBLISHER": "dummy_func"}
+                    message = {"body": '{"eta": "2000-01-01 12:00:00.000000"}'}
+                    eta = "2000-01-01 12:00:00.000000"
+                    rVal = self.channel._get_task(eta, "test_ex", message)
+                    self.assertEqual(rVal["http_request"]["url"], "dummy_func")
 
     @patch('google.cloud.pubsub_v1.PublisherClient')
     def test_publisher_creates_connection(self, mkPub):

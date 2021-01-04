@@ -285,8 +285,7 @@ class Channel(virtual.Channel):
     def _publish(self, topic, message, **kwargs):
         ''' publish the message '''
         topic_path =\
-            self.publisher.topic_path(
-                self.project_id, topic)
+            self.publisher.topic_path(self.project_id, topic)
         message = dumps(message).encode('utf-8')
         future = self.publisher.publish(
             topic_path, message, **kwargs)
