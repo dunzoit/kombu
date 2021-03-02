@@ -85,7 +85,7 @@ class Message(base.Message):
         return serialized['body'], properties
 
     def ack(self):
-        """"Send an acknowledgement of the message consumed
+        """Send an acknowledgement of the message consumed
         """
         self.channel.basic_ack(self.delivery_tag)
 
@@ -218,15 +218,18 @@ class Channel(virtual.Channel):
         :type body: str
         """
         subscription_path = self._new_queue(kwargs.get('queue'))
-        topic_path = self.state.exchanges[kwargs.get('exchange')]
-        try:
-            self.subscriber.create_subscription(
-                subscription_path, topic_path,
-                ack_deadline_seconds=self.ack_deadline_seconds)
-            logger.info("".join(["Created subscription: ", subscription_path]))
-        except AlreadyExists:
-            logger.info("".join(["Subscription already exists: ", subscription_path]))
-            pass
+        topic = kwargs.get('exchange')
+
+        if not self.topics.get(topic, False):
+            topic_path = self.state.exchanges[topic]
+            try:
+                self.subscriber.create_subscription(
+                    subscription_path, topic_path,
+                    ack_deadline_seconds=self.ack_deadline_seconds)
+                logger.info("".join(["Created subscription: ", subscription_path]))
+            except AlreadyExists:
+                logger.info("".join(["Subscription already exists: ", subscription_path]))
+                pass
 
         queue = Queue(maxsize=self.max_messages)
         self.temp_cache[subscription_path] = queue
@@ -247,28 +250,26 @@ class Channel(virtual.Channel):
         :param exchange: queue name
         :type body: str
         """
-        to_add = False
         if exchange not in self.state.exchanges:
             logger.info("".join(["Topic: ", exchange, " not found added in state"]))
             topic_path = self._get_topic_path(exchange)
-            try:
-                logger.info("Creating new topic: " + exchange)
-                self.publisher.create_topic(topic_path)
-                to_add = True
-            except AlreadyExists:
-                to_add = True
-            except Exception as e:
-                raise ChannelError(
-                    '{0} - no exchange {1!r} in vhost {2!r}'.format(
-                        e.__str__(),
-                        exchange,
-                        self.connection.client.virtual_host or '/'),
-                    (50, 10), 'Channel.exchange_declare', '404',
-                )
-            finally:
-                logger.info("".join(["adding topic: ", exchange, " to state"]))
-                if to_add:
-                    self.state.exchanges[exchange] = topic_path
+            if not self.topics.get(exchange, False):
+                try:
+                    logger.info("Creating new topic: " + exchange)
+                    self.publisher.create_topic(topic_path)
+                except AlreadyExists:
+                    logger.info("".join(["Topic: ", exchange, " already exists"]))
+                except Exception as e:
+                    raise ChannelError(
+                        '{0} - no exchange {1!r} in vhost {2!r}'.format(
+                            e.__str__(),
+                            exchange,
+                            self.connection.client.virtual_host or '/'),
+                        (50, 10), 'Channel.exchange_declare', '404',
+                    )
+
+            logger.info("".join(["adding topic: ", exchange, " to state"]))
+            self.state.exchanges[exchange] = topic_path
 
     def basic_publish(self, message, exchange='', routing_key='',
                       mandatory=False, immediate=False, **kwargs):
@@ -398,6 +399,10 @@ class Channel(virtual.Channel):
         """ Queues to ignore """
         return self.transport_options.get('IGNORED_QUEUES', [])
 
+    @cached_property
+    def topics(self):
+        """ Map of created pub/sub topics """
+        return self.transport_options.get('TOPICS_MAP', {})
 
 class Transport(virtual.Transport):
     Channel = Channel
