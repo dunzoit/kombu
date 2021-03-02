@@ -219,8 +219,7 @@ class Channel(virtual.Channel):
         """
         subscription_path = self._new_queue(kwargs.get('queue'))
         topic = kwargs.get('exchange')
-
-        if not self.topics.get(topic, False):
+        if not self.topics_map.get(topic, False):
             topic_path = self.state.exchanges[topic]
             try:
                 self.subscriber.create_subscription(
@@ -253,7 +252,7 @@ class Channel(virtual.Channel):
         if exchange not in self.state.exchanges:
             logger.info("".join(["Topic: ", exchange, " not found added in state"]))
             topic_path = self._get_topic_path(exchange)
-            if not self.topics.get(exchange, False):
+            if not self.topics_map.get(exchange, False):
                 try:
                     logger.info("Creating new topic: " + exchange)
                     self.publisher.create_topic(topic_path)
@@ -400,7 +399,7 @@ class Channel(virtual.Channel):
         return self.transport_options.get('IGNORED_QUEUES', [])
 
     @cached_property
-    def topics(self):
+    def topics_map(self):
         """ Map of created pub/sub topics """
         return self.transport_options.get('TOPICS_MAP', {})
 
