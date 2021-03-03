@@ -48,6 +48,65 @@ class TestChannel(unittest.TestCase):
             rVal = self.channel._get_subscription_name("foobar")
             self.assertEqual(rVal, "projects/fizzbuzz/subscriptions/foobar")
 
+    def test__create_topic(self):
+        ''' test__create_topic '''
+        with patch('kombu.transport.pubsub.Channel.publisher',
+                   new_callable=PropertyMock) as mkPub:
+            path = self.channel._get_topic_path =\
+                MagicMock(return_value="topic/foo")
+            createtopic = mkPub.return_value.create_topic = MagicMock()
+            self.channel._create_topic("test_ex")
+            path.assert_called_with("test_ex")
+            createtopic.assert_called_with("topic/foo")
+
+    def test__create_topic_already_exists(self):
+        ''' test__create_topic_already_exists '''
+        with patch('kombu.transport.pubsub.Channel.publisher',
+                   new_callable=PropertyMock) as mkPub:
+            path = self.channel._get_topic_path =\
+                MagicMock(return_value="topic/foo")
+            createtopic = mkPub.return_value.create_topic = MagicMock(
+                side_effect=AlreadyExists(1))
+            self.channel._create_topic("test_ex")
+            path.assert_called_with("test_ex")
+            createtopic.assert_called_with("topic/foo")
+
+    def test__create_subscriptions(self):
+        ''' test_create_subscriptions '''
+        with patch('kombu.transport.pubsub.Channel.subscriber',
+                   new_callable=PropertyMock) as mkSub:
+             with patch('kombu.transport.pubsub.Channel.ack_deadline_seconds',
+                       new_callable=PropertyMock) as mkAck:
+                mkAck.return_value = 60
+                path = self.channel._get_topic_path =\
+                    MagicMock(return_value="topic/foo")
+                subs = self.channel._get_subscription_name =\
+                    MagicMock(return_value="subs/foo")
+                createSub = mkSub.return_value.create_subscription = MagicMock()
+                self.channel._create_subscription("test_ex")
+                path.assert_called_with("test_ex")
+                createSub.assert_called_with(
+                    "subs/foo", "topic/foo", ack_deadline_seconds=60)
+
+    def test__create_subscriptions_already_exists(self):
+        ''' test_create_subscriptions '''
+        with patch('kombu.transport.pubsub.Channel.subscriber',
+                   new_callable=PropertyMock) as mkSub:
+             with patch('kombu.transport.pubsub.Channel.ack_deadline_seconds',
+                       new_callable=PropertyMock) as mkAck:
+                mkAck.return_value = 60
+                path = self.channel._get_topic_path =\
+                    MagicMock(return_value="topic/foo")
+                subs = self.channel._get_subscription_name =\
+                    MagicMock(return_value="subs/foo")
+                createSub = mkSub.return_value.create_subscription = MagicMock(
+                    side_effect=AlreadyExists(1))
+                self.channel._create_subscription("test_ex")
+                path.assert_called_with("test_ex")
+                createSub.assert_called_with(
+                    "subs/foo", "topic/foo", ack_deadline_seconds=60)
+
+
     @patch('kombu.transport.pubsub.Channel.project_id', new_callable=PropertyMock)
     def test__new_queue_from_client(self, mkID):
         ''' test__new_queue_from_client '''
@@ -141,155 +200,29 @@ class TestChannel(unittest.TestCase):
 
     def test_queue_bind_creates_subscription(self):
         ''' test_queue_bind_creates_subscription '''
-        with patch('kombu.transport.pubsub.Channel.subscriber',
-                   new_callable=PropertyMock) as mkSub:
-            with patch('kombu.transport.pubsub.Channel.ack_deadline_seconds',
-                       new_callable=PropertyMock) as mkAck:
-                with patch('kombu.transport.pubsub.Channel.state') as mkState:
-                    with patch('kombu.transport.pubsub.Channel._execution_type')\
-                            as mkExeType:
-                        with patch('kombu.transport.pubsub.Channel.topics_map',
-                                    new_callable=PropertyMock) as mkTopics:
-                            mkTopics.return_value = {}
-                            mkExeType.return_value = ''
-                            mkState.exchanges = {"test_ex": "TEST_EX"}
-                            mkAck.return_value = 60
-                            self.channel._new_queue = MagicMock(return_value="foo")
-                            subcription = mkSub.return_value.create_subscription =\
-                                MagicMock(return_value="/foo/bar")
-                            self.channel.\
-                                queue_bind(queue="test_q", exchange="test_ex")
-                            subcription.assert_called_with(
-                                "foo", "TEST_EX", ack_deadline_seconds=60)
-
-    def test_queue_bind_already_exists(self):
-        ''' test_queue_bind_already_exists '''
-        with patch('kombu.transport.pubsub.Channel.subscriber',
-                   new_callable=PropertyMock) as mkSub:
-            with patch('kombu.transport.pubsub.Channel.ack_deadline_seconds',
-                       new_callable=PropertyMock) as mkAck:
-                with patch('kombu.transport.pubsub.Channel.state') as mkState:
-                    with patch('kombu.transport.pubsub.Channel._execution_type')\
-                            as mkExeType:
-                        with patch('kombu.transport.pubsub.Channel.topics_map',
-                                    new_callable=PropertyMock) as mkTopics:
-                            mkTopics.return_value = {}
-                            mkExeType.return_value = ''
-                            mkState.exchanges = {"test_ex": "TEST_EX"}
-                            mkAck.return_value = 60
-                            self.channel._new_queue = MagicMock(return_value="foo")
-                            mkCreate = mkSub.return_value.create_subscription =\
-                                Mock(side_effect=AlreadyExists(1))
-                            rVal = self.channel.\
-                                queue_bind(queue="test_q", exchange="test_ex")
-                            mkCreate.assert_called_with(
-                                "foo", "TEST_EX", ack_deadline_seconds=60)
-                            self.assertIsNone(rVal)
-
-    def test_queue_bind_raises_exception(self):
-        ''' test_queue_bind_raises_exception '''
-        with patch('kombu.transport.pubsub.Channel.subscriber',
-                   new_callable=PropertyMock) as mkSub:
-            with patch('kombu.transport.pubsub.Channel.ack_deadline_seconds',
-                       new_callable=PropertyMock) as mkAck:
-                with patch('kombu.transport.pubsub.Channel.state',
-                           new_callable=PropertyMock) as mkState:
-                    with patch(
-                        'kombu.transport.pubsub.Channel._execution_type')\
-                            as mkExeType:
-                        mkExeType.return_value = ''
-                        mkState.exchanges = {"test_ex": "TEST_EX"}
-                        mkAck.return_value = 60
-                        self.channel._new_queue = MagicMock(return_value="foo")
-                        mkCreate = mkSub.return_value.create_subscription =\
-                            Mock(side_effect=Exception)
-                        with self.assertRaises(Exception):
-                            self.channel.\
-                                queue_bind(queue="test_q", exchange="test_ex")
-                            mkCreate.assert_called_with(
-                                "foo", "TEST_EX", ack_deadline_seconds=60)
-
-    @patch('kombu.transport.pubsub.Channel.state', new_callable=PropertyMock)
-    def test_exchange_declare_no_create_topic(self, mkState):
-        ''' test_exchange_declare_no_create_topic '''
-        with patch('kombu.transport.pubsub.Channel.publisher',
-                   new_callable=PropertyMock) as mkPub:
-            with patch('kombu.transport.pubsub.Channel.project_id',
-                       new_callable=PropertyMock) as mkID:
-                with patch('kombu.transport.pubsub.Channel.topics_map',
-                        new_callable=PropertyMock) as mkTopics:
-                    mkTopics.return_value = {"test_ex": True}
-                    mkID.return_value = "test_project_id"
-                    mkState.return_value.exchanges = {}
-                    path = self.channel._get_topic_path =\
-                        MagicMock(return_value="topic/foo")
-                    createtopic = mkPub.return_value.create_topic = MagicMock()
-                    self.channel.exchange_declare(exchange="test_ex")
-                    path.assert_called_with("test_ex")
-                    createtopic.assert_not_called()
-                    self.assertEqual(
-                        mkState.return_value.exchanges["test_ex"], "topic/foo")
-
-    @patch('kombu.transport.pubsub.Channel.state', new_callable=PropertyMock)
-    def test_exchange_declare_create_topic(self, mkState):
-        ''' test_exchange_declare_create_topic '''
-        with patch('kombu.transport.pubsub.Channel.publisher',
-                   new_callable=PropertyMock) as mkPub:
-            with patch('kombu.transport.pubsub.Channel.project_id',
-                       new_callable=PropertyMock) as mkID:
-                with patch('kombu.transport.pubsub.Channel.topics_map',
-                        new_callable=PropertyMock) as mkTopics:
+        with patch('kombu.transport.pubsub.Channel.state') as mkState:
+            with patch('kombu.transport.pubsub.Channel._execution_type')\
+                    as mkExeType:
+                with patch('kombu.transport.pubsub.Channel.topics',
+                            new_callable=PropertyMock) as mkTopics:
                     mkTopics.return_value = {}
-                    mkID.return_value = "test_project_id"
-                    mkState.return_value.exchanges = {}
-                    path = self.channel._get_topic_path =\
-                        MagicMock(return_value="topic/foo")
-                    topic = mkPub.return_value.create_topic = MagicMock()
-                    self.channel.exchange_declare(exchange="test_ex")
-                    path.assert_called_with("test_ex")
-                    topic.assert_called_with("topic/foo")
-                    self.assertEqual(
-                        mkState.return_value.exchanges["test_ex"], "topic/foo")
+                    mkExeType.return_value = ''
+                    mkState.exchanges = {"test_ex": "TEST_EX"}
+                    self.channel._new_queue = MagicMock(return_value="foo")
+                    self.channel.\
+                        queue_bind(queue="test_q", exchange="test_ex")
 
+    
     @patch('kombu.transport.pubsub.Channel.state', new_callable=PropertyMock)
-    def test_exchange_declare_already_exists(self, mkState):
-        ''' test_exchange_declare_already_exists '''
-        with patch('kombu.transport.pubsub.Channel.publisher',
-                   new_callable=PropertyMock) as mkPub:
-            with patch('kombu.transport.pubsub.Channel.project_id',
-                       new_callable=PropertyMock) as mkID:
-                with patch('kombu.transport.pubsub.Channel.topics_map',
-                        new_callable=PropertyMock) as mkTopics:
-                    mkID.return_value = "test_project_id"
-                    mkState.return_value.exchanges = {}
-                    path = self.channel._get_topic_path =\
-                        MagicMock(return_value="topic/foo")
-                    mkTopics.return_value = {}
-                    createtopic = mkPub.return_value.create_topic = MagicMock(
-                        side_effect=AlreadyExists(1))
-                    self.channel.exchange_declare(exchange="test_ex")
-                    path.assert_called_with("test_ex")
-                    createtopic.assert_called_with("topic/foo")
-                    self.assertEqual(
-                        mkState.return_value.exchanges["test_ex"], "topic/foo")
-
-    @patch('kombu.transport.pubsub.Channel.state', new_callable=PropertyMock)
-    def test_exchange_declare_raises_expection(self, mkState):
-        ''' test_exchange_declare_raises_expection '''
-        with patch('kombu.transport.pubsub.Channel.publisher',
-                   new_callable=PropertyMock) as mkPub:
-            with patch('kombu.transport.pubsub.Channel.project_id',
-                       new_callable=PropertyMock) as mkID:
-                mkID.return_value = "test_project_id"
-                mkState.return_value.exchanges = {}
-                path = mkPub.return_value.topic_path =\
-                    MagicMock(return_value="topic/foo")
-                topic = mkPub.return_value.create_topic = MagicMock(
-                    side_effect=Exception)
-                with self.assertRaises(Exception):
-                    self.channel.exchange_declare(exchange="test_ex")
-                    path.assert_called_with("test_project_id", "test_ex")
-                    topic.assert_called_with("topic/foo")
+    def test_exchange_declare(self, mkState):
+        ''' test_exchange_declare '''
+        mkState.return_value.exchanges = {}
+        path = self.channel._get_topic_path =\
+            MagicMock(return_value="topic/foo")
+        self.channel.exchange_declare(exchange="test_ex")
+        path.assert_called_with("test_ex")
+        self.assertEqual(
+            mkState.return_value.exchanges["test_ex"], "topic/foo")
 
     @patch('kombu.transport.pubsub.dumps')
     def test_basic_publish_calls_create_cloud_task(self, mkDumps):
