@@ -154,6 +154,8 @@ class Channel(virtual.Channel):
             logger.info("".join(["Subscription already exists: ", subscription_path]))
 
     def _create_resources(self):
+        if self.transport_options.get("WARMUP_DISABLED"):
+            return
         for topic in self.topics:
             self._create_topic(topic)
             self._create_subscription(topic)
