@@ -4,6 +4,7 @@ import os
 import sys
 from dateutil import parser
 from threading import Thread
+import base64
 
 from anyjson import dumps, loads
 from amqp.protocol import queue_declare_ok_t
@@ -73,15 +74,33 @@ class Message(base.Message):
 
     def _translate_message(self, raw_message):
         serialized = loads(raw_message.message.data)
-        properties = {
-            'headers': serialized['headers'],
-            'content_type': serialized['content-type'],
-            'reply_to': serialized['properties']['reply_to'],
-            'correlation_id': serialized['properties']['correlation_id'],
-            'delivery_mode': serialized['properties']['delivery_mode'],
-            'delivery_info': serialized['properties']['delivery_info'],
-            'content_encoding': serialized['content-encoding']
-        }
+        try:
+            properties = {
+                'headers': serialized['headers'],
+                'content_type': serialized['content-type'],
+                'reply_to': serialized['properties']['reply_to'],
+                'correlation_id': serialized['properties']['correlation_id'],
+                'delivery_mode': serialized['properties']['delivery_mode'],
+                'delivery_info': serialized['properties']['delivery_info'],
+                'content_encoding': serialized['content-encoding']
+            }
+        except TypeError:
+            logger.exception("error reading serialized: {}".format(serialized))
+            serialized = base64.b64decode(serialized).decode('utf-8')
+            body = base64.b64decode(serialized["body"]).decode('utf-8')
+            properties = {
+                'headers': serialized['headers'],
+                'content_type': serialized['content-type'],
+                'reply_to': serialized['properties']['reply_to'],
+                'correlation_id': serialized['properties']['correlation_id'],
+                'delivery_mode': serialized['properties']['delivery_mode'],
+                'delivery_info': serialized['properties']['delivery_info'],
+                'content_encoding': serialized['content-encoding']
+            }
+            return body, properties
+        except:
+            logger.exception("global error reading serialized: {}".format(serialized))
+            raise Empty()
         return serialized['body'], properties
 
     def ack(self):
