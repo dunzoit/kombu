@@ -54,14 +54,17 @@ class Worker(Thread):
                 continue
             if resp.received_messages:
                 for msg in resp.received_messages:
-                    data = loads(msg.message.data)
-                    if not isinstance(data, dict): # Ignore messages which are not of expected format
+                    try:
+                        data = loads(msg.message.data)
+                    except ValueError:
+                        logger.warning("".join([
+                            "Unable to deserialize the message: ", msg.message.data]))
+                        continue
+                    # Check messages type, ignore if unexpexted
+                    if not isinstance(data, dict):
                         logger.warning("".join([
                             "Pulled message of unexpected type: ",
                             str(type(data)), "data: ", data]))
-                        self.subscriber.\
-                            acknowledge(self.subscription_path, [msg.ack_id])
-                        logger.info("Acked unexpected messsage")
                         continue
                     self.queue.put(msg, block=True)
 
@@ -221,16 +224,16 @@ class Channel(virtual.Channel):
             for msg in resp.received_messages:
                 if self.temp_cache[subscription_path].full():
                     break
-                data = loads(msg.message.data)
+                try:
+                    data = loads(msg.message.data)
+                except ValueError:
+                    logger.warning("".join([
+                        "Unable to deserialize the message: ", msg.message.data]))
                 # Check messages type, ignore if unexpexted
                 if not isinstance(data, dict):
                     logger.warning("".join([
                         "Pulled message of unexpected type: ",
                         str(type(data)), " data: ", data]))
-                    # Ack it
-                    self.subscriber.\
-                        acknowledge(subscription_path, [msg.ack_id])
-                    logger.info("Acked unexpected messsage")
                     continue
                 self.qos.append(msg.message.message_id,
                                 (msg, subscription_path))
