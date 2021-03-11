@@ -55,6 +55,18 @@ class Worker(Thread):
                 continue
             if resp.received_messages:
                 for msg in resp.received_messages:
+                    try:
+                        data = loads(msg.message.data)
+                    except ValueError:
+                        logger.warning("".join([
+                            "Unable to deserialize the message: ", msg.message.data]))
+                        continue
+                    # Check messages type, ignore if unexpexted
+                    if not isinstance(data, dict):
+                        logger.warning("".join([
+                            "Pulled message of unexpected type: ",
+                            str(type(data)), "data: ", data]))
+                        continue
                     self.queue.put(msg, block=True)
 
 
@@ -233,10 +245,22 @@ class Channel(virtual.Channel):
             for msg in resp.received_messages:
                 if self.temp_cache[subscription_path].full():
                     break
+                try:
+                    data = loads(msg.message.data)
+                except ValueError:
+                    logger.warning("".join([
+                        "Unable to deserialize the message: ", msg.message.data]))
+                # Check messages type, ignore if unexpexted
+                if not isinstance(data, dict):
+                    logger.warning("".join([
+                        "Pulled message of unexpected type: ",
+                        str(type(data)), " data: ", data]))
+                    continue
                 self.qos.append(msg.message.message_id,
                                 (msg, subscription_path))
                 self.temp_cache[subscription_path].put(msg)
-            return self.temp_cache[subscription_path].get(block=True)
+            if not self.temp_cache[subscription_path].empty():
+                return self.temp_cache[subscription_path].get(block=True)
         raise Empty()
 
     def queue_declare(self, queue=None, passive=False, *args, **kwargs):
